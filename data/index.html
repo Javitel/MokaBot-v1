@@ -1,0 +1,107 @@
+<!DOCTYPE HTML><html>
+<!-- Rui Santos - Complete project details at https://RandomNerdTutorials.com
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files.
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software. -->
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="https://code.highcharts.com/highcharts.js"></script>
+  <style>
+    body {
+      min-width: 310px;
+    	max-width: 800px;
+    	height: 400px;
+      margin: 0 auto;
+    }
+    h2 {
+      font-family: Arial;
+      font-size: 2.5rem;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <h2>MokaBot</h2>
+  <div id="chart-temperature" class="container"></div>
+
+<button onclick="document.location='settings'">
+Go to Settings
+</button>
+
+
+</body>
+<script src="https://code.highcharts.com/modules/exporting.js"></script>
+<!-- optional -->
+<script src="https://code.highcharts.com/modules/offline-exporting.js"></script>
+<script src="https://code.highcharts.com/modules/export-data.js"></script>
+
+<script>
+var chartT = new Highcharts.Chart({
+  chart:{ renderTo : 'chart-temperature' },
+  title: { text: 'Moka Info' },
+  series: [{
+    name: 'Temperature',
+    showInLegend: false,
+    data: []
+  },{
+    name: 'Pressure',
+    yAxis: 1,
+    showInLegend: false,
+    data: []
+  }],
+  plotOptions: {
+    line: { animation: false,
+      dataLabels: { enabled: false }
+    }
+  },
+  xAxis: { type: 'datetime',
+    dateTimeLabelFormats: { second: '%H:%M:%S' }
+  },
+  yAxis: [{
+    min: 0,
+    max: 120,
+    title: { text: 'Temperature (Celsius)' },
+    color: '#059e8a'
+    //title: { text: 'Temperature (Fahrenheit)' }
+  },
+  {
+     min: 0.850,
+    max: 2.0,
+    title: { text: 'Pressure (Bar)' },
+    opposite: true,
+    color: '#ff9e8a'
+  }
+],
+  credits: { enabled: true }
+});
+setInterval(function ( ) {
+  var xhttp = new XMLHttpRequest();
+  xhttp.onreadystatechange = function() {
+    if (this.readyState == 4 && this.status == 200) {
+      var x = (new Date()).getTime();
+      var response = this.responseText;
+          y = parseFloat(response.split("_")[0]);
+          y2 = parseFloat(response.split("_")[1]);
+          console.log(y);
+          console.log(y2);
+      //console.log(this.responseText);
+        if(chartT.series[0].data.length > 250) {
+          if(!isNaN(parseFloat(response.split("_")[0]))){
+            chartT.series[0].addPoint([x, y], true, true, true);
+          }
+          chartT.series[1].addPoint([x, y2], true, true, true);
+        } else {
+          if(!isNaN(parseFloat(response.split("_")[0]))){
+            chartT.series[0].addPoint([x, y], true, false, true);
+          }
+          chartT.series[1].addPoint([x, y2], true, false, true);
+        }
+    }
+  };
+  xhttp.open("GET", "/temperature", true);
+  xhttp.send();
+}, 1000 ) ;
+</script>
+</html>

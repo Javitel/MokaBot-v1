@@ -1,0 +1,128 @@
+<!DOCTYPE HTML><html><head>
+  <title>Moka Bot Settings</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  </head><body onload="fillData()">
+  <form action="/set" method="get" target="_self">
+    Controller P: <input type="number" placeholder="1.0" step="0.000001" min="0" max="100" value="P" id="PVal" name="PVal"/>
+    <input type="submit" value="set P">
+  </form><br>
+  <form action="/set" method="get" target="_self">
+    Controller I: <input type="number" placeholder="1.0" step="0.000001" min="0" max="100" value="I" id="IVal" name="IVal"/>
+    <input type="submit" value="set I">
+  </form><br>
+  <form action="/set" method="get" target="_self">
+    Controller D: <input type="number" placeholder="1.0" step="0.000001" min="0" max="100" value="D" id="DVal" name="DVal"/>
+    <input type="submit" value="set D">
+  </form><br>
+  <form action="/set" method="get" target="_self">
+    MQTT Broker URL: <input type="text" name="mqttBroker">
+    <input type="submit" value="set Mqtt Broker">
+  </form><br>
+
+  <form action="/setResistor" method="get" target="_self">
+    Resistor value: <input type="number" placeholder="10000" step="1" min="0" max="200000" value="R" id="RVal" name="RVal"/>
+    <input type="submit" value="set Passive resistor value">
+  </form><br>
+  <form action="/setResistor" method="get" target="_self">
+    NTC Value: <input type="number" placeholder="50000" step="1" min="0" max="200000" value="N" id="NVal" name="NVal"/>
+    <input type="submit" value="set NTC resistor value">
+  </form><br>
+  <form action="/setResistor" method="get" target="_self">
+    NTC Beta value: <input type="number" placeholder="3950" step="1" min="0" max="10000" value="B" id="BVal" name="BVal"/>
+    <input type="submit" value="set NTC resistor beta">
+  </form><br>
+
+    <form action="/setBrewData" method="get" target="_self">
+    Bloom phase time: <input type="number" placeholder="0" step="1" min="0" max="100" value="BloomTime" id="BloomTime" name="BloomTime"/>
+    <input type="submit" value="set bloom phase time in seconds">
+  </form><br>
+  <form action="/setBrewData" method="get" target="_self">
+    boiling point temp: <input type="number" placeholder="0" step="0.01" min="0" max="110" value="BoilTemp" id="BoilTemp" name="BoilTemp"/>
+    <input type="submit" value="set boiling temp manually">
+  </form><br>
+  <form action="/setBrewData" method="get" target="_self">
+    Bloom Offset temp: <input type="number" placeholder="0" step="1" min="-15" max="15" value="BloomOffset" id="BloomOffset" name="BloomOffset"/>
+    <input type="submit" value="set bloom offset">
+  </form><br>
+  
+  <!-- <form action="/tare" method="get" target="_self">
+    Tare Scale
+    <input type="submit" value="tare">
+  </form><br>
+  <form action="/calibrate" method="get" target="_self">
+    Calibrate weight: <input type="number" placeholder="100.0" step="0.1" min="0" max="100" value="100.0" id="calibrate" name="calibrate"/>
+    <input type="submit" value="calibrate">
+  </form> -->
+</body>
+<script>
+  function fillPIDData(){
+    //document.getElementById('PVal').placeholder=1000
+    var xhttp = new XMLHttpRequest();
+    console.log("script init");
+    xhttp.onload = function() {
+    if (this.status == 200) {
+      var response = this.responseText;
+      console.log(response);
+          var p = parseFloat(response.split("_")[0]);
+          var i = parseFloat(response.split("_")[1]);
+          var d = parseFloat(response.split("_")[2]);
+          console.log(p);
+          console.log(i);
+          console.log(d);
+          document.getElementById('PVal').defaultValue  =p
+          document.getElementById('IVal').defaultValue  =i
+          document.getElementById('DVal').defaultValue  =d
+    }
+  };
+  xhttp.open("GET", "/pidInfo", true);
+  xhttp.send();
+  }
+  function fillResistorData(){
+    //document.getElementById('PVal').placeholder=1000
+    var xhttp = new XMLHttpRequest();
+    console.log("script init");
+    xhttp.onload = function() {
+    if (this.status == 200) {
+      var response = this.responseText;
+      console.log(response);
+          var r = parseFloat(response.split("_")[0]);
+          var n = parseFloat(response.split("_")[1]);
+          var b = parseFloat(response.split("_")[2]);
+          console.log(r);
+          console.log(n);
+          console.log(b);
+          document.getElementById('RVal').defaultValue  =r
+          document.getElementById('NVal').defaultValue  =n
+          document.getElementById('BVal').defaultValue  =b
+    }
+  };
+  xhttp.open("GET", "/resistorInfo", true);
+  xhttp.send();
+  }
+  function fillBrewData(){
+    //document.getElementById('PVal').placeholder=1000
+    var xhttp = new XMLHttpRequest();
+    console.log("script init");
+    xhttp.onload = function() {
+    if (this.status == 200) {
+      var response = this.responseText;
+      console.log(response);
+          var bloomtime = parseFloat(response.split("_")[0]);
+          var boiltemp = parseFloat(response.split("_")[1]);
+          var bloomoffset = parseFloat(response.split("_")[2]);
+          console.log(bloomtime);
+          console.log(boiltemp);
+          console.log(bloomoffset);
+          document.getElementById('BloomTime').defaultValue  =bloomtime
+          document.getElementById('BoilTemp').defaultValue  =boiltemp
+          document.getElementById('BloomOffset').defaultValue  =bloomoffset
+    }
+  };
+  xhttp.open("GET", "/boilInfo", true);
+  xhttp.send();
+  }
+  fillPIDData();
+  fillResistorData();
+  fillBrewData();
+</script>
+</html>
