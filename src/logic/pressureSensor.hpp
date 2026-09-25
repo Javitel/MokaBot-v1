@@ -4,6 +4,7 @@ extern "C" {
 
 void initSensor();
 float getCurrentPressure();
+float getAmbientTemp();
 void updateCurrentPressure();
 void calibrateBoiling();
 void overrideBoiling(double input);

@@ -96,6 +96,10 @@ float getBoilingTemp(float pressure){
   
 }
 
+float getAmbientTemp(){
+  return bmp.readTemperature();
+}
+
 float getPressureByTemp(float temp, float pressure){
     if(temp < getBoilingTemp(pressure/100000)){
       return getCurrentPressure()/100000;

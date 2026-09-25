@@ -214,6 +214,7 @@ BaseType_t xWasDelayed;
         }
         
       }
+      adjustIntegral();
     }
   }
 
@@ -401,6 +402,10 @@ void getResistorValues(double *data){
   data[1] = ntcRefResistor;
   data[2] = ntcBeta;
   //return aux;
+}
+
+void adjustIntegral(){
+  i = target - getAmbientTemp();
 }
 
 void setPID(double newP, double newI, double newD){
