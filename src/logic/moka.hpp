@@ -33,7 +33,7 @@ double getBloomOffset();
 double getBloomTargetTime();
 void setManualBloomTime(double overrideTime);
 void skipBloom();
-void adjustIntegral();
+void estimateIntegral();
    #ifdef __cplusplus
       } // extern "C"
    #endif

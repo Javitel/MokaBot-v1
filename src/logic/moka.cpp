@@ -7,7 +7,7 @@
 #include <time.h>
 #include "logic/pressureSensor.hpp"
 
-const int RelayActivationValue = HIGH;
+const int RelayActivationValue = LOW;
 //const int pinDataDQ = 33;
 const int pinHeater = 32;
 //const int pinNTC = 27;
@@ -44,7 +44,7 @@ int mokaStatus = 0;
 bool connected=false;
 bool relayControl;
 
-double defaultp = 47.5;//0.03 0.003;
+double defaultp = 47.2;//0.03 0.003;
 double defaulti = 0.00075;//0.00045;//0.0004;
 double defaultd = 0.085;//0.000002;
 
@@ -214,7 +214,7 @@ BaseType_t xWasDelayed;
         }
         
       }
-      adjustIntegral();
+      estimateIntegral();
     }
   }
 
@@ -341,8 +341,14 @@ Serial.print("-");
 //lnR = log(resistance/vm);
 aux = A + (B * log(resistance)) + (C * pow(log(resistance), 3));
 kelvin =1.0/aux;
+if(abs((((kelvin- 273.15) + temp) /2) - temp) < 1){
+  temp = ((kelvin- 273.15) * 0.75 )+ temp * 0.25;
+}
+else{
+  temp = kelvin- 273.15;
+}
 
-temp = kelvin- 273.15;
+//temp = kelvin- 273.15;
   Serial.println(temp);
   // Serial.println("end");
   if(temp>0){ 
@@ -404,10 +410,6 @@ void getResistorValues(double *data){
   //return aux;
 }
 
-void adjustIntegral(){
-  i = target - getAmbientTemp();
-}
-
 void setPID(double newP, double newI, double newD){
   MokaPreferences.begin("my-app", false);
   p = newP; i = newI; d = newD;
@@ -420,4 +422,8 @@ void setResistorValues(double newR, double newN, double newB){
   resistorFixed = newR; ntcRefResistor = newN; ntcBeta = newB;
   saveResistorValues(newR, newN, newB);
   MokaPreferences.end(); 
+}
+
+void estimateIntegral(){
+  i = 1.05*(target - getAmbientTemp())/10000;
 }

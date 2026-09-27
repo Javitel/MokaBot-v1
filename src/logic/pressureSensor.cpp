@@ -36,6 +36,10 @@ float getCurrentPressure(){
     return readPressure;//bmp.readPressure();
 }
 
+float getAmbientTemp(){
+    return bmp.readTemperature();
+}
+
 void updateCurrentPressure(){
   double aux;
     //while(true){
@@ -94,10 +98,6 @@ float getBoilingTemp(float pressure){
     //Serial.println(getCalibratedTemp());
     return (float)aux-273.15;
   
-}
-
-float getAmbientTemp(){
-  return bmp.readTemperature();
 }
 
 float getPressureByTemp(float temp, float pressure){

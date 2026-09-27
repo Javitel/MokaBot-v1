@@ -25,6 +25,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
+#define DEBUG_DECIMAL true
+
 #define USE_DYNAMIC_PARAMETERS      false
 bool LOAD_DEFAULT_CONFIG_DATA = true;
 
@@ -279,17 +281,42 @@ BaseType_t xWasDelayed;
       setCurrentTempLabel(String("DISC.").c_str());  
     }
     else{
-      setCurrentTempLabel(prepareLabel(currentTemp,1,"c").c_str()); 
+      if(DEBUG_DECIMAL){
+        setCurrentTempLabel(prepareLabel(currentTemp,1,"c").c_str()); 
+      }
+      else{
+        setCurrentTempLabel(prepareLabel(currentTemp,0,"c").c_str()); 
+      }
+      //setCurrentTempLabel(prepareLabel(currentTemp,1,"c").c_str()); 
     }
     setCurrentPressure(prepareLabel(currentPressure/100000,3,"bar").c_str());
       if(getMokaStatus() ==1){
-    setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),1,"c").c_str());
+        if(DEBUG_DECIMAL){
+          setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),1,"c").c_str());
+        }
+        else{
+          setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),0,"c").c_str());
+        }
+    //setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),1,"c").c_str());
     aux = getBoilingTemp(currentPressure/100000);
-    text = "boils at: "+ (String)aux+"c";
+    if(DEBUG_DECIMAL){
+      text = "boils at: "+ String(aux,1)+"c";
+    }
+    else{
+      text = "boils at: "+ String(aux,0)+"c";
+    }
+    //aux = getBoilingTemp(currentPressure/100000);
+    //text = "boils at: "+ String(aux,1) +"c";
     setExtraInfo(text.c_str());
   }
   if(getMokaStatus() ==2){ 
-    setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),1,"c").c_str());
+    if(DEBUG_DECIMAL){
+      setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),1,"c").c_str());
+    }
+    else{
+      setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),0,"c").c_str());
+    }
+    //setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),1,"c").c_str());
     aux = getPressureByTemp(getTargetBoilingTemp(),getCalibratedPressure());
     text = "aprox Press.: "+ (String)aux+"bar";
     setExtraInfo(text.c_str());
@@ -298,9 +325,23 @@ BaseType_t xWasDelayed;
     if(getBloomTime() == -1){
       text = "OFF";
     }
-    else{text = "Bloom: "+String(getBloomTime()) + "s";}
+    else{
+      if(DEBUG_DECIMAL){
+        text = "Bloom: "+String(getBloomTime(),1) + "s";
+      }
+      else{
+        text = "Bloom: "+String(getBloomTime(),0) + "s";
+      }
+      //text = "Bloom: "+String(getBloomTime()) + "s";
+    }
     setProWeigth(text.c_str());
-    text = "Brew: "+String(getBrewTime()) + "s";
+    if(DEBUG_DECIMAL){
+      text = "Brew: "+String(getBrewTime(),1) + "s";
+    }
+    else{
+      text = "Brew: "+String(getBrewTime(),0) + "s";
+    }
+    //text = "Brew: "+String(getBrewTime()) + "s";
     setProTemp(text.c_str());
   }
   else{
@@ -337,8 +378,6 @@ void setup() {
           #if LV_USE_LOG != 0
     lv_log_register_print_cb( my_print ); /* register print function for debugging */
   #endif
-  //if( xSemaphoreTake( xSemaphore, ( TickType_t ) 1000 ) == pdTRUE ){
-          /*Initialize the display*/
   static lv_disp_drv_t disp_drv;
   lv_disp_drv_init(&disp_drv);
   disp_drv.hor_res = screenWidth;
@@ -367,7 +406,7 @@ void setup() {
 
   //loop();//Load Screen
   currentPressure = getCurrentPressure();
-      xTaskCreate(process, "process",2048, NULL, 7, &PIDTask);     
+      xTaskCreatePinnedToCore(process, "process",2048, NULL, 7, &PIDTask,1);     
       xTaskCreatePinnedToCore(webserverService, "webserver",4096, NULL, 3, &WebserviceTask,1);
       xTaskCreatePinnedToCore(updateSensors, "sensors",4096, NULL, 8, &SensorTask,0);
       //xTaskCreate(updateSensors, "sensors",4098, NULL, 8, &SensorTask);
@@ -379,7 +418,7 @@ void setup() {
       //xTaskCreate(calculateLabels, "labels",4096, NULL, 8, &LabelsTasks);
       //xTaskCreate(proRoutine, "pro",4096, NULL, 3, &ProTask);
       delay(1000);
-      //showSplashScreen(0);
+      showSplashScreen(0);
   ui_init();
       //lv_obj_invalidate(lv_scr_act()); // Mark the active screen for full redraw
     //lv_task_handler();
@@ -387,8 +426,6 @@ void setup() {
   //espIp = String(initNet());
   //Serial.println(espIp);
 }
-
-
 
 void loop() {
   //Serial.println(bmp.readPressure());
