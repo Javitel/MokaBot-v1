@@ -10,8 +10,6 @@
 #include "ui.h"
 #include "logic/moka.hpp"
 #include "logic/pressureSensor.hpp"
-#include "logic/pro.hpp"
-
 WiFiProvisioner provisioner;
 WebServer *server;
 Preferences preferencesWS;
@@ -339,20 +337,6 @@ void handleUpdate() {
   }
   sendSettings();
 }
-void tareScale() {
-  //File index = SPIFFS.open("/index.html", "r");
-  tare(1);
-  sendSettings();
-}
-void calibrateScale() {
-  //File index = SPIFFS.open("/index.html", "r");
-  String Calibrate;
-  if(server->hasArg("calibrate")){
-    Calibrate = server->arg("calibrate");
-    calibrateCellSensor(Calibrate.toDouble());
-  }
-  sendSettings();
-}
 
 void serverStart(){
  //server.reset();
@@ -361,7 +345,7 @@ void serverStart(){
   server->on("/", HTTP_GET, sendBrew);
   server->on("/temperature", HTTP_GET, sendData);
   server->on("/brewInfo", HTTP_GET, sendBrewData);
-  server->on("/tare", HTTP_GET, tareScale);
+  //server->on("/tare", HTTP_GET, tareScale);
   //server->on("/calibrate", HTTP_GET, calibrateScale);
   server->on("/pidInfo", HTTP_GET, sendPID);
   server->on("/settings", HTTP_GET, sendSettings);

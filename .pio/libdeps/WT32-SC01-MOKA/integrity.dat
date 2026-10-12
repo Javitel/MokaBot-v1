@@ -1,13 +1,8 @@
-wollewald/ADS1115_WE@^1.5.4
-lvgl/lvgl @ 8.4.0
-santerilindfors/WiFiProvisioner@2.0.0
-adafruit/Adafruit BMP280 Library@^2.6.8
-lovyan03/LovyanGFX
-r-downing/AutoPID@^1.0.4
-adafruit/Adafruit ADS1X15@^2.5.0
 plerup/EspSoftwareSerial@^8.2.0
-dfrobot/DFRobot_HX711@^1.0.0
-adafruit/MAX6675 library@^1.1.2
-robtillaart/HX711@^0.6.3
-adafruit/Adafruit HX711@^1.0.2
+lovyan03/LovyanGFX
+santerilindfors/WiFiProvisioner
+adafruit/Adafruit BMP280 Library@^2.6.8
+robtillaart/ADS1X15@^0.6.2
+lvgl/lvgl @ 8.4.0
 SPI
+r-downing/AutoPID@^1.0.4

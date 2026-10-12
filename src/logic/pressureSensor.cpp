@@ -23,7 +23,7 @@ void initSensor(){
   setTargetBoilingTemp(preferences.getFloat("boilingTemp", getTargetBoilingTemp()));
   setTargetHeatingTemp(preferences.getFloat("heatingTemp", getTargetHeatingTemp()));
   preferences.end();
-  bmp.begin(0x76);
+  bmp.begin(BMP280_ADDRESS);
   bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
                   Adafruit_BMP280::SAMPLING_X16,     /* Temp. oversampling */
                   Adafruit_BMP280::SAMPLING_X16,    /* Pressure oversampling */

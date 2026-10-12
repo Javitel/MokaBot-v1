@@ -21,7 +21,6 @@
 #include "logic/moka.hpp"
 #include "logic/pressureSensor.hpp"
 #include "logic/webserver.hpp"
-#include "logic/pro.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -218,8 +217,7 @@ void my_touch_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
 
 //************************************************************************************
 //  SETUP AND LOOP
-//************************************************************************************
-
+//*********************************************************
 
 int frame = 0;
 float currentPressure;
@@ -227,53 +225,41 @@ float currentTemp;
 float aux;
 String text;
 
-TaskHandle_t PIDTask = NULL;  ///  Task handler fot the LED Task
-TaskHandle_t UITask = NULL;  ///  Task handler fot the LED Task
-TaskHandle_t WebserviceTask = NULL;  ///  Task handler fot the LED Task
-TaskHandle_t SensorTask = NULL;  ///  Task handler fot the LED Task
-TaskHandle_t LabelsTasks = NULL;  ///  Task handler fot the LED Task
-TaskHandle_t PressureTask = NULL;  ///  Task handler fot the LED Task
-//TaskHandle_t ProTask = NULL;  ///  Task handler fot the LED Task
-
-// static lv_img_dsc_t my_img_dsc = {
-//     .header.always_zero = 0,
-//     .header.w = 80,
-//     .header.h = 60,
-//     .data_size = 80 * 60 * LV_COLOR_DEPTH / 8,
-//     .header.cf = LV_IMG_CF_TRUE_COLOR,          /*Set the color format*/
-//     .data = my_img_data,
-// };
+TaskHandle_t PIDTask = NULL; 
+TaskHandle_t UITask = NULL;  
+TaskHandle_t WebserviceTask = NULL;  
+TaskHandle_t SensorTask = NULL;  
+TaskHandle_t LabelsTasks = NULL;  
+TaskHandle_t PressureTask = NULL; 
 
 String prepareLabel(float value, int precision, String label){
   return String(value, precision)+label;
 }
 
 String htmlTemp() {
-
     return String(currentTemp);
 }
 
 void refreshUI(void *param){
   /*Initialize the input device driver*/
-
-       TickType_t xLastWakeTime;
-const TickType_t xFrequency = pdMS_TO_TICKS(20);
-BaseType_t xWasDelayed;
-xLastWakeTime = xTaskGetTickCount ();
+  TickType_t xLastWakeTime;
+  const TickType_t xFrequency = pdMS_TO_TICKS(20);
+  BaseType_t xWasDelayed;
+  xLastWakeTime = xTaskGetTickCount ();
   while(true){
     lv_timer_handler(); 
-    xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );  }
+    xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );  
+  }
 }
-
 
 void calculateLabels(void *param){
   TickType_t xLastWakeTime;
-const TickType_t xFrequency = pdMS_TO_TICKS(20);
-BaseType_t xWasDelayed;
+  const TickType_t xFrequency = pdMS_TO_TICKS(20);
+  BaseType_t xWasDelayed;
   //showScaleButton(0);
   while(true){
     vTaskDelay( pdMS_TO_TICKS( 15 ));
-  setCurrentIP(getIp());
+    setCurrentIP(getIp());
     currentPressure = getCurrentPressure();
     currentTemp = getCurrentTemp();
     //Set Labels
@@ -287,95 +273,76 @@ BaseType_t xWasDelayed;
       else{
         setCurrentTempLabel(prepareLabel(currentTemp,0,"c").c_str()); 
       }
-      //setCurrentTempLabel(prepareLabel(currentTemp,1,"c").c_str()); 
     }
     setCurrentPressure(prepareLabel(currentPressure/100000,3,"bar").c_str());
-      if(getMokaStatus() ==1){
-        if(DEBUG_DECIMAL){
-          setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),1,"c").c_str());
-        }
-        else{
-          setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),0,"c").c_str());
-        }
-    //setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),1,"c").c_str());
-    aux = getBoilingTemp(currentPressure/100000);
-    if(DEBUG_DECIMAL){
-      text = "boils at: "+ String(aux,1)+"c";
-    }
-    else{
-      text = "boils at: "+ String(aux,0)+"c";
-    }
-    //aux = getBoilingTemp(currentPressure/100000);
-    //text = "boils at: "+ String(aux,1) +"c";
-    setExtraInfo(text.c_str());
-  }
-  if(getMokaStatus() ==2){ 
-    if(DEBUG_DECIMAL){
-      setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),1,"c").c_str());
-    }
-    else{
-      setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),0,"c").c_str());
-    }
-    //setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),1,"c").c_str());
-    aux = getPressureByTemp(getTargetBoilingTemp(),getCalibratedPressure());
-    text = "aprox Press.: "+ (String)aux+"bar";
-    setExtraInfo(text.c_str());
-    //temp brew time and bloom time
-    
-    if(getBloomTime() == -1){
-      text = "OFF";
-    }
-    else{
+    if(getMokaStatus() ==1){
       if(DEBUG_DECIMAL){
-        text = "Bloom: "+String(getBloomTime(),1) + "s";
+        setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),1,"c").c_str());
       }
       else{
-        text = "Bloom: "+String(getBloomTime(),0) + "s";
+        setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),0,"c").c_str());
       }
+      aux = getBoilingTemp(currentPressure/100000);
+      if(DEBUG_DECIMAL){
+        text = "boils at: "+ String(aux,1)+"c";
+      }
+      else{
+        text = "boils at: "+ String(aux,0)+"c";
+      }
+      setExtraInfo(text.c_str());
+    } 
+    if(getMokaStatus() ==2){ 
+      if(DEBUG_DECIMAL){
+        setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),1,"c").c_str());
+      }
+      else{
+        setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),0,"c").c_str());
+      }
+      aux = getPressureByTemp(getTargetBoilingTemp(),getCalibratedPressure());
+      text = "aprox Press.: "+ (String)aux+"bar";
+      setExtraInfo(text.c_str());
+      if(getBloomTime() == -1){
+        text = "OFF";
+      }
+      else{
+        if(DEBUG_DECIMAL){
+          text = "Bloom: "+String(getBloomTime(),1) + "s";
+        }
+        else{
+          text = "Bloom: "+String(getBloomTime(),0) + "s";
+        }
       //text = "Bloom: "+String(getBloomTime()) + "s";
-    }
-    setProWeigth(text.c_str());
-    if(DEBUG_DECIMAL){
-      text = "Brew: "+String(getBrewTime(),1) + "s";
+      }
+      setProWeigth(text.c_str());
+      if(DEBUG_DECIMAL){
+        text = "Brew: "+String(getBrewTime(),1) + "s";
+      }
+      else{
+        text = "Brew: "+String(getBrewTime(),0) + "s";
+      }
+      setProTemp(text.c_str());
     }
     else{
-      text = "Brew: "+String(getBrewTime(),0) + "s";
+      setProWeigth(String("").c_str());
+      setProTemp(String("").c_str());
     }
-    //text = "Brew: "+String(getBrewTime()) + "s";
-    setProTemp(text.c_str());
+    if(getMokaStatus() ==0 ){
+      text = "OFF";
+      setTargetTempLabel(text.c_str());
+      text = "";
+      setExtraInfo(text.c_str());
+    }
+    xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
   }
-  else{
-    setProWeigth(String("").c_str());
-    setProTemp(String("").c_str());
-  }
-  if(getMokaStatus() ==0 ){
-    setTargetTempLabel(String("OFF").c_str());
-    text = "";
-    setExtraInfo(text.c_str());
-  }
-  xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
-  // if(isBaseConnected() == 1){
-  //   showScaleButton(1);
-  //   text = String(getWeight()) + "g";
-  //   setProWeigth(text.c_str());
-  //   text = String(getBaseTemp()) + "c";
-  //   setProTemp(text.c_str());
-  // }
-  // else{
-  //   showScaleButton(0);
-  //   setProWeigth(String("").c_str());
-  //   setProTemp(String("").c_str());
-  // }
-}
 }
 
 void setup() {
   Serial.begin(115200);
-   tft.begin();
+  tft.begin();
   tft.setRotation(3);
   tft.setBrightness(100);
-      lv_init();
-          #if LV_USE_LOG != 0
+  lv_init();
+  #if LV_USE_LOG != 0
     lv_log_register_print_cb( my_print ); /* register print function for debugging */
   #endif
   static lv_disp_drv_t disp_drv;
@@ -385,8 +352,6 @@ void setup() {
   disp_drv.flush_cb = my_disp_flush;
   disp_drv.draw_buf = &draw_buf;
   lv_disp_drv_register(&disp_drv);
- 
-
   unsigned status;
   initSensor();
   init();
@@ -395,39 +360,29 @@ void setup() {
   indev_drv.type = LV_INDEV_TYPE_POINTER;
   indev_drv.read_cb = my_touch_read;
   lv_indev_drv_register(&indev_drv);
-  //lv_obj_t * img_src = lv_img_create(lv_scr_act()); /*Crate an image object*/
-    //lv_img_set_src(img_src, &my_img_data);  /*Set the created file as image (a red fl  ower)*/
-    //lv_obj_set_pos(img_src, 0, 0);  
-  // start the UI
-    ui_init();
-  ui_initBoot();
-       lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 10);
-  //showSplashScreen(1);
 
-  //loop();//Load Screen
-  currentPressure = getCurrentPressure();
-      xTaskCreatePinnedToCore(process, "process",2048, NULL, 7, &PIDTask,1);     
-      xTaskCreatePinnedToCore(webserverService, "webserver",4096, NULL, 3, &WebserviceTask,1);
-      xTaskCreatePinnedToCore(updateSensors, "sensors",4096, NULL, 8, &SensorTask,0);
-      //xTaskCreate(updateSensors, "sensors",4098, NULL, 8, &SensorTask);
-      xTaskCreatePinnedToCore(updateAmbientPressure, "pressure",2048, NULL, 4, &PressureTask,0);
-      //xTaskCreate(updateAmbientPressure, "pressure",2048, NULL, 4, &PressureTask);
-      //xTaskCreate(refreshUI, "UI",4096, NULL, 9, &UITask);
-      xTaskCreatePinnedToCore(refreshUI, "UI",4096, NULL, 9, &UITask,0);
-      xTaskCreatePinnedToCore(calculateLabels, "labels",4096, NULL, 8, &LabelsTasks,1);
-      //xTaskCreate(calculateLabels, "labels",4096, NULL, 8, &LabelsTasks);
-      //xTaskCreate(proRoutine, "pro",4096, NULL, 3, &ProTask);
-      delay(1000);
-      showSplashScreen(0);
   ui_init();
-      //lv_obj_invalidate(lv_scr_act()); // Mark the active screen for full redraw
-    //lv_task_handler();
-      //lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 10);
-  //espIp = String(initNet());
-  //Serial.println(espIp);
+  ui_initBoot();
+  lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 10);
+
+  currentPressure = getCurrentPressure();
+  xTaskCreatePinnedToCore(process, "process",2048, NULL, 7, &PIDTask,1);     
+  xTaskCreatePinnedToCore(webserverService, "webserver",4096, NULL, 3, &WebserviceTask,1);
+    xTaskCreatePinnedToCore(updateSensors, "sensors",4096, NULL, 8, &SensorTask,0);
+  //xTaskCreate(updateSensors, "sensors",4098, NULL, 8, &SensorTask);
+    xTaskCreatePinnedToCore(updateAmbientPressure, "pressure",2048, NULL, 4, &PressureTask,0);
+  //xTaskCreate(updateAmbientPressure, "pressure",2048, NULL, 4, &PressureTask);
+  //xTaskCreate(refreshUI, "UI",4096, NULL, 9, &UITask);
+  xTaskCreatePinnedToCore(refreshUI, "UI",4096, NULL, 9, &UITask,0);
+  xTaskCreatePinnedToCore(calculateLabels, "labels",4096, NULL, 8, &LabelsTasks,1);
+  //xTaskCreate(calculateLabels, "labels",4096, NULL, 8, &LabelsTasks);
+  //xTaskCreate(proRoutine, "pro",4096, NULL, 3, &ProTask);
+  vTaskDelay(pdMS_TO_TICKS(1000));
+  showSplashScreen(0);
+  ui_init();
 }
 
 void loop() {
   //Serial.println(bmp.readPressure());
-  delay(1000);
+  vTaskDelay(pdMS_TO_TICKS(1000));
 }

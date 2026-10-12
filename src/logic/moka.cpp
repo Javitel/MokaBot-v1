@@ -1,13 +1,14 @@
 #include <Arduino.h>
 #include <Wire.h> 
-#include <Adafruit_ADS1X15.h>
+//#include <Adafruit_ADS1X15.h>
+#include "ADS1X15.h"
 #include <AutoPID.h>
 #include "moka.hpp"
 #include <Preferences.h>
 #include <time.h>
 #include "logic/pressureSensor.hpp"
 
-const int RelayActivationValue = LOW;
+const int RelayActivationValue = HIGH;
 //const int pinDataDQ = 33;
 const int pinHeater = 32;
 //const int pinNTC = 27;
@@ -15,7 +16,8 @@ const int pinHeater = 32;
 boolean running = false;
 boolean changePending = false;
 
-Adafruit_ADS1115 ads;
+//Adafruit_ADS1115 ads;
+ADS1115 ads(0x48);
 
 double gain=1.0;
 
@@ -44,7 +46,7 @@ int mokaStatus = 0;
 bool connected=false;
 bool relayControl;
 
-double defaultp = 47.2;//0.03 0.003;
+double defaultp = 40.2;//0.03 0.003;
 double defaulti = 0.00075;//0.00045;//0.0004;
 double defaultd = 0.085;//0.000002;
 
@@ -75,12 +77,14 @@ int getrelayStatus(int status){
   double averageADSRead(uint16_t id, int samples, double margin, double ref){
     uint32_t average = 0;
     uint32_t aux = 0;
-    ads.startADCReading(id, /*continuous=*/true);
-    vTaskDelay( pdMS_TO_TICKS( 50));//delay(10);
+    ads.setMode(0);
+    ads.requestADC(id);
+    //ads.startADCReading(id, /*continuous=*/true);
+    vTaskDelay( pdMS_TO_TICKS( 30));//delay(10);
     boolean retry =false;
     for (uint8_t i = 0; i < samples; i++) {
       //aux = ads.readADC_SingleEnded(id);
-      aux = ads.getLastConversionResults();
+      aux = ads.getValue();//getLastConversionResults();
       //Serial.println(aux);
       //if(ads.conversionComplete()){
         if((aux > ref + margin || aux < ref - margin) && ref > 0 && retry == false){
@@ -96,7 +100,7 @@ int getrelayStatus(int status){
       //  i--;
       //}
       
-      vTaskDelay( pdMS_TO_TICKS( 10));//delay(10);
+      vTaskDelay( pdMS_TO_TICKS( 17));//delay(10);
     }
     Serial.print("result  average: ");
     Serial.println(average/samples);
@@ -111,7 +115,7 @@ const TickType_t xFrequency = pdMS_TO_TICKS(150);
 BaseType_t xWasDelayed;
   while(true){
       try{
-      refVoltage = ads.computeVolts(ads.readADC_SingleEnded(3));
+      refVoltage = ads.toVoltage(1)*ads.readADC(3);  ;//computeVolts(ads.readADC_SingleEnded(3));
       updateTempNTC();
       } catch (...){}
     //vTaskDelay(pdMS_TO_TICKS(50));
@@ -161,12 +165,14 @@ void saveResistorValues(double newR, double newN, double newB){
 }
 
 void init() {
-Wire.setTimeOut(25);
-myPID.setBangBang(8,1);
+//Wire.setTimeOut(100);
+myPID.setBangBang(12,1);
 pinMode(pinHeater, OUTPUT);
 digitalWrite(pinHeater,getrelayStatus(LOW));
-ads.setGain(GAIN_TWOTHIRDS);
-ads.setDataRate(RATE_ADS1115_860SPS);
+//ads.setGain(GAIN_TWOTHIRDS);
+//ads.setDataRate(RATE_ADS1115_860SPS);
+ads.setGain(0); 
+ads.setDataRate(7); 
 ads.begin();
 MokaPreferences.begin("my-app", false);
 recoverPid();
@@ -180,7 +186,7 @@ void process(void *param){
  // TickType_t startTime = xTaskGetTickCount();
   double aux;
   TickType_t xLastWakeTime;
-const TickType_t xFrequency = pdMS_TO_TICKS(255);
+const TickType_t xFrequency = pdMS_TO_TICKS(100);
 BaseType_t xWasDelayed;
   while(true){
 //vTaskDelay((150) / portTICK_PERIOD_MS);
@@ -188,8 +194,6 @@ BaseType_t xWasDelayed;
      if(current <= -127.0 || mokaStatus == 0){
       connected=false;
       digitalWrite(pinHeater,getrelayStatus(LOW));
-      //vTaskDelay( pdMS_TO_TICKS( 50 ));
-      //elapsedTime += (millis() - startTime);
     }
     else{  
       connected=true;
@@ -294,9 +298,9 @@ double getBrewTime(){
  }
 
 void updateTempNTC(){
-  refVoltage = averageADSRead(ADS1X15_REG_CONFIG_MUX_SINGLE_3,3, 25, refVoltage);//ads.readADC_Differential_1_3();//
+  refVoltage = averageADSRead(3,2, 25, refVoltage);//ads.readADC_Differential_1_3();//
   //refVoltage= refVoltage * 0.1875/1000;  f
-  refVoltage = ads.computeVolts(refVoltage);
+  refVoltage = ads.toVoltage(1)*refVoltage;
   double temp;
    //float refMultiplier = 0.1875/1000;
  //957.0;//10000;//9980.0;
@@ -306,27 +310,14 @@ double resistance;
  double kelvin;
  double vm = 0.0;
  double aux = 0;
-  //double A=0.9668452613/1000;
-  //double B=1.964261376/10000;
-  //double C=2.099773678/10000000;
-
-  //BEST SO FAR
-  // double A=0.6622698572/1000;
-  // double B=2.487175948/10000;
-  // double C=0.004697715028/10000000;
-//sub 1c boiling
-// double A=0.7367564649/1000;
-//   double B=2.377184165/10000;
-//   double C=0.3581657140/10000000;
-
   double A=0.9032071364/1000;
   double B=2.086434938/10000;
   double C=1.597510723/10000000;
-  ntcValue = averageADSRead(ADS1X15_REG_CONFIG_MUX_SINGLE_0,8, 75, ntcValue);//ads.readADC_Differential_0_3();//
+  ntcValue = averageADSRead(0,3, 75, ntcValue);//ads.readADC_Differential_0_3();//
   Serial.print(refVoltage);
 Serial.print("-");
 //vm=( ntcValue ) * 0.1875/1000;     
-vm = ads.computeVolts(ntcValue);
+vm = ads.toVoltage(1)*ntcValue;
 Serial.print(vm);
 Serial.print("-");
 //resistance = resistorFixed / ((refVoltage/vm)-1); 
@@ -334,11 +325,6 @@ resistance = (refVoltage - vm)*(resistorFixed/vm);
 
 Serial.print(resistance);
 Serial.print("-");
-//kelvin = beta/(log(resistance/ntcRefResistor)+(beta/298.15));
-//kelvin =1.0/kelvin;
-
-//Steinhart-Hart equation
-//lnR = log(resistance/vm);
 aux = A + (B * log(resistance)) + (C * pow(log(resistance), 3));
 kelvin =1.0/aux;
 if(abs((((kelvin- 273.15) + temp) /2) - temp) < 1){
@@ -356,10 +342,8 @@ else{
     //}
   }
   else{current = -127.0f; }
+
 }
-
-
-
 
 float getCurrentTemp(){
     return current;
@@ -425,5 +409,5 @@ void setResistorValues(double newR, double newN, double newB){
 }
 
 void estimateIntegral(){
-  i = 1.05*(target - getAmbientTemp())/10000;
+  i = 1.5*(target - getAmbientTemp())/10000.0;
 }
