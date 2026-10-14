@@ -15,19 +15,19 @@ This brewer is based on the combination of two existing appliances: a traditiona
 - Takes the concept of a sensor and a PID controlled resistor in order to achieve a target temperature of a smart kettle.
 - Using Clausius-Clapeyron equation, knowing boiling point at a certain atmospheric pressure, you can estimate internal pressure
 
-Doing the proper math is possible to keep the pot at a certain pressure. Since pressure and temeprature are related you have to manage resistance of the coffee as your thir chair leg in order to increase or decrease the temperature you need to brew (https://youtu.be/UGf7mtfhOFM?si=DkclQYDJ4awHg2Jr&t=669 that why James took this decision here, to compensate the lower pressure he had to grind coarser to keep the same equivalent output flow rate).
+Doing the proper math is possible to keep the pot at a certain pressure. Since pressure and temeprature are related you have to manage resistance of the coffee as your thir chair leg in order to increase or decrease the temperature you need to brew ([James MokaBot ](https://youtu.be/UGf7mtfhOFM?si=DkclQYDJ4awHg2Jr&t=669)that why James took this decision here, to compensate the lower pressure he had to grind coarser to keep the same equivalent output flow rate).
 
 ## Features
 To function this device the following components were used:
 
  - WT32-SC01.
  - ADS1115.
- - NTC50k 3950 M6.
+ - NTC50k 3950 M6. [NTC 50k](https://es.aliexpress.com/item/1005006189248088.html)
  - 2Kohm resistor.
  - BMP280.
- - 5V2A power supply.
- - C13 female connector.
- - Round switch.
+ - 5V2A power supply. [Power supply](https://es.aliexpress.com/item/1005004434305525.html)
+ - C13 female connector. [C13 connector](https://es.aliexpress.com/item/1005009947629857.html)
+ - Round switch. [Switch](https://es.aliexpress.com/item/1005013351974257.html)
 
 ## Points to discuss
 
