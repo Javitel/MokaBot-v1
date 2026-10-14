@@ -18,12 +18,19 @@ This brewer is based on the combination of two existing appliances: a traditiona
 Doing the proper math is possible to keep the pot at a certain pressure. Since pressure and temeprature are related you have to manage resistance of the coffee as your thir chair leg in order to increase or decrease the temperature you need to brew ([James MokaBot ](https://youtu.be/UGf7mtfhOFM?si=DkclQYDJ4awHg2Jr&t=669)that why James took this decision here, to compensate the lower pressure he had to grind coarser to keep the same equivalent output flow rate).
 
 ## Features
-To function this device the following components were used:
+List of features
+- Bloom. Based on boiling point (with an offset) is supposed to create enough pressure to soak the coffee bed but not enough to make it flow through the siphon completely.
+- Boiling point calibration
+- Save preheat and target temperature
+- Bloom graph, being able to export as csv (timestamp, temp and pressure). Build with highcharts, sometimes does not load, don't know why.
+- Settings page to adjust details: fixed resistor value,
 
- - WT32-SC01.
+Components used:
+
+ - WT32-SC01. (**NO WT32-SC01 Plus**)
  - ADS1115.
  - NTC50k 3950 M6. [NTC 50k](https://es.aliexpress.com/item/1005006189248088.html)
- - 2Kohm resistor.
+ - 2Kohm resistor, 1% or better precision.
  - BMP280.
  - 5V2A power supply. [Power supply](https://es.aliexpress.com/item/1005004434305525.html)
  - C13 female connector. [C13 connector](https://es.aliexpress.com/item/1005009947629857.html)
