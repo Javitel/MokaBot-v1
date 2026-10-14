@@ -34,11 +34,7 @@ To function this device the following components were used:
  - **Coffee recipe**
 	 - There are currently two big opposite trends around "how to brew" moka pots. Let's call James Hoffmann's and Lance Hedrick's recipes, with or without preheating respectively.
 	 - As far as I have tested, none of them is exceptionally better, but there is an inherent issue with the second recipe that I found (Thanks to Lance who handed me the corresponding paper).
-		>199 It has been already stressed out the absence of thermodynamic equilibrium
-		>200 between liquid and vapour phases of water, which results in a temperature 
-		>201 difference sensed by probes whether immersed or not. Vapour conditions are 
-		>202 driven by both evaporation  from liquid-vapour separation surface and convec
-		>203 tive heat transfer with each surrounding surface.
+		>It has been already stressed out the absence of thermodynamic equilibriumbetween liquid and vapour phases of water, which results in a temperature difference sensed by probes whether immersed or not. Vapour conditions are driven by both evaporation  from liquid-vapour separation surface and convective heat transfer with each surrounding surface.
 
 		The problem I need to arrange with the second recipe is the non-stable  water situation inside the boiler, being able to see waterstarting to boil around the heater but the water around the sensor is still relatively cold, caused by the energy transmission limitation of water that reamins steady.
 
