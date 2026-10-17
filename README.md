@@ -35,6 +35,7 @@ Components used:
  - 5V2A power supply. [Power supply](https://es.aliexpress.com/item/1005004434305525.html)
  - C13 female connector. [C13 connector](https://es.aliexpress.com/item/1005009947629857.html)
  - Round switch. [Switch](https://es.aliexpress.com/item/1005013351974257.html)
+ - Kettle Connector [Connector](https://es.aliexpress.com/item/1005012049626600.html?)
 
 ## Points to discuss
 
@@ -53,9 +54,11 @@ Components used:
  - **Points of improvement**
 	
 	-	Code Refactor: I am not really familiar with C++ object management, UI libraries and basically platformIO/ESP32 development.
-	-	PID Tunning:
-	-	Adding support for other screens: I wanted to add support for a board like waveshare ESP32-S3-Touch-LCD-3.5B, to add the option to have an SD card for configuration and a speaker (beep when preheat or brew finished?)
-	-	
+	-	PID Tunning: I have basic PID knowledge and added a basic Integral compensation based on delta temperature between ambient and targer, it is a basic scalar value but I suppose it is not as easy as that.
+	-	Adding support for other screens: I wanted to add support for a board like waveshare ESP32-S3-Touch-LCD-3.5, to add the option to have an SD card for configuration and a speaker (beep when preheat or brew finished?)
+	-	Save and share profiles
+   	-	Better boiling point calibration process.
+  
 
 # Extras
 *Also to mention, to disclose any major comment or concern about intellectual property. To this day I am fully owner of the patent around this concept (was a fortunate accident I never considered, like finding a winning lottery ticket) and I was afraid having the source code public and the patent could cause an issue with the concept of ownership in case anyone adds any value to the project. That is why, This is a non-commercial license, getting everything out of any dispute related with intellectual property (if anybody is willing to discuss or ask any question regarding that, please let me know)
