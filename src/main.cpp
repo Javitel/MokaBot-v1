@@ -24,7 +24,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#define DEBUG_DECIMAL true
 
 #define USE_DYNAMIC_PARAMETERS      false
 bool LOAD_DEFAULT_CONFIG_DATA = true;
@@ -223,6 +222,7 @@ int frame = 0;
 float currentPressure;
 float currentTemp;
 float aux;
+bool initCycle = true;
 String text;
 
 TaskHandle_t PIDTask = NULL; 
@@ -240,6 +240,9 @@ String htmlTemp() {
     return String(currentTemp);
 }
 
+// LVGL is not thread safe: the UI task and the labels task share this lock.
+static SemaphoreHandle_t lvglMutex;
+
 void refreshUI(void *param){
   /*Initialize the input device driver*/
   TickType_t xLastWakeTime;
@@ -247,92 +250,78 @@ void refreshUI(void *param){
   BaseType_t xWasDelayed;
   xLastWakeTime = xTaskGetTickCount ();
   while(true){
-    lv_timer_handler(); 
-    xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );  
+    xSemaphoreTake(lvglMutex, portMAX_DELAY);
+    lv_timer_handler();
+    xSemaphoreGive(lvglMutex);
+    xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
   }
 }
 
+// Calls setter only when the text differs from the last one applied, so
+// unchanged labels are not invalidated (and redrawn) on every refresh.
+static void updateLabel(String &last,const String &text, void (*setter)(const char *)){
+  if( !initCycle && text == last){ return;}
+  last = text;
+  setter(text.c_str());
+}
+
+String formatValue(float value, const char *prefix, const char *suffix){
+  return String(prefix) + String(value, ui_show_decimals() ? 1 : 0) + suffix;
+}
+
+// Formats a Celsius value in the unit selected on the screen.
+String formatTemp(float celsius, const char *prefix){
+  if(ui_use_fahrenheit()) return formatValue(celsius * 9.0 / 5.0 + 32.0, prefix, "°F");
+  return formatValue(celsius, prefix, "°C");
+}
+
 void calculateLabels(void *param){
-  TickType_t xLastWakeTime;
-  const TickType_t xFrequency = pdMS_TO_TICKS(20);
-  BaseType_t xWasDelayed;
-  //showScaleButton(0);
+  initCycle = true;
+  String lastIp, lastTempText, lastPressureText, lastTargetText, lastExtraText, lastBloomText, lastBrewText;
   while(true){
-    vTaskDelay( pdMS_TO_TICKS( 15 ));
-    setCurrentIP(getIp());
+    vTaskDelay( pdMS_TO_TICKS( 50 ));
     currentPressure = getCurrentPressure();
     currentTemp = getCurrentTemp();
-    //Set Labels
-    if(currentTemp <= -50.0 || !(currentTemp==currentTemp)){
-      setCurrentTempLabel(String("DISC.").c_str());  
+    int status = getMokaStatus();
+
+    // Build every label text first, without touching LVGL.
+    String ip = getIp();
+    String tempText = (currentTemp <= -50.0 || isnan(currentTemp)) ? String("DISC.") : formatTemp(currentTemp, "");
+    // Pressure moves in thousandths of a bar, so it needs more precision than
+    // temperatures; 1 decimal would freeze the label at "1.0bar".
+    String pressureText = prepareLabel(currentPressure/100000, 3, "bar");
+    String targetText, extraText, bloomText, brewText;
+
+    if(status == 1){
+      bloomText="";
+      brewText="";
+      targetText = formatTemp(getTargetHeatingTemp(), "");
+      extraText = formatTemp(getBoilingTemp(currentPressure/100000), "Boils at: ");
+    }
+    else if(status == 2){
+      targetText = formatTemp(getTargetBoilingTemp(), "");
+      extraText = "Pressure: " + String(getPressureByTemp(getTargetBoilingTemp(),getCalibratedPressure())) + "bar";
+      bloomText = (getBloomTime() == -1) ? String("OFF") : formatValue(getBloomTime(), "Bloom: ", "s");
+      brewText = formatValue(getBrewTime(), "Brew: ", "s");
     }
     else{
-      if(DEBUG_DECIMAL){
-        setCurrentTempLabel(prepareLabel(currentTemp,1,"c").c_str()); 
-      }
-      else{
-        setCurrentTempLabel(prepareLabel(currentTemp,0,"c").c_str()); 
-      }
+      targetText = "OFF";
+      extraText="";
+      bloomText="";
+      brewText="";
     }
-    setCurrentPressure(prepareLabel(currentPressure/100000,3,"bar").c_str());
-    if(getMokaStatus() ==1){
-      if(DEBUG_DECIMAL){
-        setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),1,"c").c_str());
-      }
-      else{
-        setTargetTempLabel(prepareLabel(getTargetHeatingTemp(),0,"c").c_str());
-      }
-      aux = getBoilingTemp(currentPressure/100000);
-      if(DEBUG_DECIMAL){
-        text = "boils at: "+ String(aux,1)+"c";
-      }
-      else{
-        text = "boils at: "+ String(aux,0)+"c";
-      }
-      setExtraInfo(text.c_str());
-    } 
-    if(getMokaStatus() ==2){ 
-      if(DEBUG_DECIMAL){
-        setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),1,"c").c_str());
-      }
-      else{
-        setTargetTempLabel(prepareLabel(getTargetBoilingTemp(),0,"c").c_str());
-      }
-      aux = getPressureByTemp(getTargetBoilingTemp(),getCalibratedPressure());
-      text = "aprox Press.: "+ (String)aux+"bar";
-      setExtraInfo(text.c_str());
-      if(getBloomTime() == -1){
-        text = "OFF";
-      }
-      else{
-        if(DEBUG_DECIMAL){
-          text = "Bloom: "+String(getBloomTime(),1) + "s";
-        }
-        else{
-          text = "Bloom: "+String(getBloomTime(),0) + "s";
-        }
-      //text = "Bloom: "+String(getBloomTime()) + "s";
-      }
-      setProWeigth(text.c_str());
-      if(DEBUG_DECIMAL){
-        text = "Brew: "+String(getBrewTime(),1) + "s";
-      }
-      else{
-        text = "Brew: "+String(getBrewTime(),0) + "s";
-      }
-      setProTemp(text.c_str());
-    }
-    else{
-      setProWeigth(String("").c_str());
-      setProTemp(String("").c_str());
-    }
-    if(getMokaStatus() ==0 ){
-      text = "OFF";
-      setTargetTempLabel(text.c_str());
-      text = "";
-      setExtraInfo(text.c_str());
-    }
-    xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
+
+    // Apply only what changed.
+    xSemaphoreTake(lvglMutex, portMAX_DELAY);
+    updateLabel(lastIp, ip, setCurrentIP);
+    updateLabel(lastTempText, tempText, setCurrentTempLabel);
+    updateLabel(lastPressureText, pressureText, setCurrentPressure);
+    updateLabel(lastTargetText, targetText, setTargetTempLabel);
+    updateLabel(lastExtraText, extraText, setExtraInfo);
+    updateLabel(lastBloomText, bloomText, setProWeigth);
+    updateLabel(lastBrewText, brewText, setProTemp);
+    xSemaphoreGive(lvglMutex);
+    initCycle = false;
   }
 }
 
@@ -360,26 +349,22 @@ void setup() {
   indev_drv.type = LV_INDEV_TYPE_POINTER;
   indev_drv.read_cb = my_touch_read;
   lv_indev_drv_register(&indev_drv);
-
+  
   ui_init();
   ui_initBoot();
   lv_disp_draw_buf_init(&draw_buf, buf, NULL, screenWidth * 10);
+  ui_init();
 
   currentPressure = getCurrentPressure();
+  lvglMutex = xSemaphoreCreateMutex();
   xTaskCreatePinnedToCore(process, "process",2048, NULL, 7, &PIDTask,1);     
   xTaskCreatePinnedToCore(webserverService, "webserver",4096, NULL, 3, &WebserviceTask,1);
-    xTaskCreatePinnedToCore(updateSensors, "sensors",4096, NULL, 8, &SensorTask,0);
-  //xTaskCreate(updateSensors, "sensors",4098, NULL, 8, &SensorTask);
-    xTaskCreatePinnedToCore(updateAmbientPressure, "pressure",2048, NULL, 4, &PressureTask,0);
-  //xTaskCreate(updateAmbientPressure, "pressure",2048, NULL, 4, &PressureTask);
-  //xTaskCreate(refreshUI, "UI",4096, NULL, 9, &UITask);
-  xTaskCreatePinnedToCore(refreshUI, "UI",4096, NULL, 9, &UITask,0);
+  xTaskCreatePinnedToCore(updateSensors, "sensors",4096, NULL, 8, &SensorTask,0);
+  xTaskCreatePinnedToCore(updateAmbientPressure, "pressure",2048, NULL, 4, &PressureTask,0);
+  xTaskCreatePinnedToCore(refreshUI, "UI",4096, NULL, 7, &UITask,0);
   xTaskCreatePinnedToCore(calculateLabels, "labels",4096, NULL, 8, &LabelsTasks,1);
-  //xTaskCreate(calculateLabels, "labels",4096, NULL, 8, &LabelsTasks);
-  //xTaskCreate(proRoutine, "pro",4096, NULL, 3, &ProTask);
   vTaskDelay(pdMS_TO_TICKS(1000));
   showSplashScreen(0);
-  ui_init();
 }
 
 void loop() {

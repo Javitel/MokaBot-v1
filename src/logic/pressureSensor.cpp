@@ -60,13 +60,46 @@ void overrideBoiling(double input){
   preferences.putFloat("boilPointPres", boilingPointPressure);
   preferences.end();
 }
+#define CALIBRATION_WINDOW_MS 3000
+#define CALIBRATION_SAMPLE_MS 100
+
+static volatile bool calibrating = false;
+
+// Samples the temperature for CALIBRATION_WINDOW_MS and stores the maximum
+// (with the pressure read at that moment) as the boiling calibration point.
+static void calibrateBoilingTask(void *param){
+    float maxTemp = NAN;
+    float pressureAtMax = readPressure;
+    for(int elapsed = 0; elapsed < CALIBRATION_WINDOW_MS; elapsed += CALIBRATION_SAMPLE_MS){
+        float temp = getCurrentTemp();
+        // Skip disconnected/invalid readings.
+        if(!isnan(temp) && temp > -50.0 && (isnan(maxTemp) || temp > maxTemp)){
+            maxTemp = temp;
+            pressureAtMax = readPressure;
+        }
+        vTaskDelay(pdMS_TO_TICKS(CALIBRATION_SAMPLE_MS));
+    }
+
+    if(!isnan(maxTemp)){
+        preferences.begin("my-app", false);
+        boilingPoint = maxTemp;
+        preferences.putFloat("boilingPoint", boilingPoint);
+        boilingPointPressure = pressureAtMax/100000;
+        preferences.putFloat("boilPointPres", boilingPointPressure);
+        preferences.end();
+    }
+    calibrating = false;
+    vTaskDelete(NULL);
+}
+
+// Non-blocking: runs the sampling window in its own task so the caller (an
+// LVGL event) does not freeze the UI. Ignored while a calibration is running.
 void calibrateBoiling(){
-    preferences.begin("my-app", false);
-    boilingPoint = getCurrentTemp();
-     preferences.putFloat("boilingPoint", boilingPoint);
-  boilingPointPressure = readPressure/100000;
-  preferences.putFloat("boilPointPres", boilingPointPressure);
-  preferences.end();
+    if(calibrating) return;
+    calibrating = true;
+    if(xTaskCreate(calibrateBoilingTask, "calibrate", 3072, NULL, 5, NULL) != pdPASS){
+        calibrating = false;
+    }
 }
 float getCalibratedTemp(){
     return boilingPoint;
@@ -94,8 +127,7 @@ float getBoilingTemp(float pressure){
     aux = (8.3145/40700) * aux;
     aux = (1.0/(getCalibratedTemp()+273.15))-aux;
     aux = (1.0/aux);
-    //Serial.println(getCalibratedPressure());
-    //Serial.println(getCalibratedTemp());
+
     return (float)aux-273.15;
   
 }

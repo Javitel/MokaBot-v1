@@ -13,7 +13,7 @@ merged_bin = os.environ.get("MERGED_BIN_PATH", "${BUILD_DIR}/${PROGNAME}-merged.
 
 def merge_bin_action(source, target, env):
     buildfs_cmd = " ".join([
-        '"C:\\Users\\Javi\\.platformio\\penv\\Scripts\\platformio.exe"',
+        '"/home/javier/.platformio/penv/bin/platformio"',
         "run", 
         "--target", 
         "buildfs",
@@ -27,7 +27,7 @@ def merge_bin_action(source, target, env):
         source[0].get_abspath(),
     ]
     flash_images.append('0x3D0000')
-    flash_images.append('C:\\Users\\Javi\\Documents\\ESP_Projects\\WT32-SC01-PLUS-PLATFORMIO-mokaBotV2\\WT32-SC01-MOKA-PLATFORMIO-master\\.pio\\build\\WT32-SC01-MOKA\\spiffs.bin')
+    flash_images.append('/home/javier/source/repos/Javier/mokabot/.pio/build/WT32-SC01-MOKA/spiffs.bin')
     print(flash_images)
     merge_cmd = " ".join(
         [

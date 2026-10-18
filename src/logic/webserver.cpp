@@ -1,8 +1,8 @@
 #include "webserver.hpp"
 #include "WebServer.h"
 #include <WiFiProvisioner.h>
-//#include <ESPAsyncWebServer.h>
 #include "SPIFFS.h"
+#include <ESPmDNS.h>
 #include <Preferences.h>
 #include <LovyanGFX.hpp>
 #include <iostream>
@@ -10,84 +10,86 @@
 #include "ui.h"
 #include "logic/moka.hpp"
 #include "logic/pressureSensor.hpp"
+#define HTTP_PORT 80
+// Reachable as http://mokabot.local (mDNS) and, on routers that register DHCP
+// hostnames, as http://mokabot.
+#define HOSTNAME "mokabot"
+
+// WebServer::begin() fails silently if bind() fails (e.g. port 80 not yet
+// released by the provisioning portal); this exposes whether it is listening.
+class MokaWebServer : public WebServer {
+public:
+  using WebServer::WebServer;
+  bool isListening() { return (bool)_server; }
+};
+
 WiFiProvisioner provisioner;
-WebServer *server;
+MokaWebServer *server = nullptr;
 Preferences preferencesWS;
 String ip = "Disconnected";
 int mokaWifiStatus= 0;
 
+// Appends "name":value to a JSON object body; NaN becomes null.
+// decimals < 0 uses %g with 10 significant digits (for very small values).
+static void appendJson(String &json, const char *name, double value, int decimals = 6) {
+  char str[64];
+  if (isnan(value)) snprintf(str, sizeof(str), "\"%s\":null", name);
+  else if (decimals < 0) snprintf(str, sizeof(str), "\"%s\":%.10g", name, value);
+  else snprintf(str, sizeof(str), "\"%s\":%.*f", name, decimals, value);
+  if (json.length() > 1) json += ",";
+  json += str;
+}
+
+static float currentInternalPressure(){
+  if(!isnan(getCurrentTemp())){
+    return getPressureByTemp(getCurrentTemp(),getCurrentPressure());
+  }
+  return getCurrentPressure()/100000;
+}
+
+// {"temp":<C>,"pressure":<bar>}
 String retrieveData(){
-  float internalPressure;
-  if(!isnan(getCurrentTemp())){
-    internalPressure = getPressureByTemp(getCurrentTemp(),getCurrentPressure());
-  }
-  else{
-    internalPressure = getCurrentPressure()/100000;
-  }
-    String aux = (String)getCurrentTemp()+ "_" +(String)internalPressure ;
-  //Serial.println(aux);
-  return aux;
+  String json = "{";
+  appendJson(json, "temp", getCurrentTemp());
+  appendJson(json, "pressure", currentInternalPressure());
+  json += "}";
+  return json;
 }
 
+// {"temp":<C>,"pressure":<bar>,"time":<brew seconds>,"status":<moka status>}
 String retrieveExtractionData(){
-  float internalPressure;
-  if(!isnan(getCurrentTemp())){
-    internalPressure = getPressureByTemp(getCurrentTemp(),getCurrentPressure());
-  }
-  else{
-    internalPressure = getCurrentPressure()/100000;
-  }
-    String aux = (String)getCurrentTemp()+ "_" +(String)internalPressure + "_" + (String)getBrewTime()+ "_" + (String)getMokaStatus();
-  //Serial.println(aux);
-  return aux;
+  String json = "{";
+  appendJson(json, "temp", getCurrentTemp());
+  appendJson(json, "pressure", currentInternalPressure());
+  appendJson(json, "time", getBrewTime());
+  appendJson(json, "status", getMokaStatus());
+  json += "}";
+  return json;
 }
 
-String retrievePID(){
-  String aux = "";
-  double current[3];
+// All settings values as JSON, keyed by the settings form input ids.
+String retrieveSettings(){
+  String json = "{";
+  double current[6];
   getPID(current);
-  char str[150];
-  sprintf(str, "%f", current[0]);
-  aux = aux + str+"_";
-  sprintf(str, "%f", current[1]);
-  aux = aux + str+"_";
-  sprintf(str, "%f", current[2]);
-  aux = aux + str+"_";
+  appendJson(json, "PVal", current[0]);
+  appendJson(json, "IVal", current[1]);
+  appendJson(json, "DVal", current[2]);
   getResistorValues(current);
-  sprintf(str, "%f", current[0]);
-  aux = aux + str+"_";
-  sprintf(str, "%f", current[1]);
-  aux = aux + str+"_";
-  sprintf(str, "%f", current[2]);
-  aux = aux + str;
-  return aux;
-}
-String retrieveResistor(){
-  String aux = "";
-  double current[3];
-  getResistorValues(current);
-  char str[100];
-  sprintf(str, "%f", current[0]);
-  aux = aux + str+"_";
-  sprintf(str, "%f", current[1]);
-  aux = aux + str+"_";
-  sprintf(str, "%f", current[2]);
-  aux = aux + str;
-  return aux;
-}
-
-String retrieveBoilInfo(){
-  String aux = "";
-  double current[3];
-  //getResistorValues(current);
-  char str[100];
-  sprintf(str, "%f", getBloomTargetTime());
-  aux = aux + str+"_";
-  sprintf(str, "%f", getBoilingTemp(getCurrentPressure()/100000));
-  aux = aux + str+"_";
-  sprintf(str, "%f", getBloomOffset());
-  aux = aux + str;
-  return aux;
+  appendJson(json, "RVal", current[0]);
+  appendJson(json, "SHA", current[1], -1);
+  appendJson(json, "SHB", current[2], -1);
+  appendJson(json, "SHC", current[3], -1);
+  appendJson(json, "BloomTime", getBloomTargetTime());
+  appendJson(json, "BoilTemp", getBoilingTemp(getCurrentPressure()/100000), 2);
+  appendJson(json, "BloomOffset", getBloomOffset());
+  appendJson(json, "Fahrenheit", ui_use_fahrenheit() ? 1 : 0, 0);
+  appendJson(json, "Decimals", ui_show_decimals() ? 1 : 0, 0);
+  char hex[32];
+  snprintf(hex, sizeof(hex), ",\"ButtonColor\":\"#%06lx\"", (unsigned long)ui_get_button_color());
+  json += hex;
+  json += "}";
+  return json;
 }
 
 void provisioningWifi(){
@@ -132,47 +134,45 @@ void webserverService(void *param){
   }
 }
 
+// Tries to connect with the given credentials for ~2.5s.
+static bool connectWiFi(const String &ssid, const String &pass){
+  WiFi.begin(ssid.c_str(), pass.c_str());
+  for(int retries = 0; retries < 25; retries++){
+    if(WiFi.status() == WL_CONNECTED) return true;
+    delay(100);
+  }
+  return WiFi.status() == WL_CONNECTED;
+}
+
 int initNet() {
   if(WiFi.isConnected()){
     WiFi.disconnect();
-    //lv_timer_handler(); 
-    //mokaWifiStatus = 0;
     ip = "Disconnected";
     return 0;
-  }else{
-    server = new WebServer(8080);
-  preferencesWS.begin("my-app", false); 
+  }
+
+  // Must be set before the station starts to be used in the DHCP request.
+  WiFi.setHostname(HOSTNAME);
+
+  preferencesWS.begin("my-app", false);
   String ssid = preferencesWS.getString("SSID", "");
   String pass = preferencesWS.getString("Password", "");
-  if(pass.equals("") && ssid.equals("")){
-    ip = "Provisioning...";
-    //mokaWifiStatus =-2;
-    provisioningWifi();
-    //return -1;
-  }
-  else{
-    WiFi.begin(ssid.c_str(), pass.c_str());
-  }
-    int retries = 0;
-    while(WiFi.status() != WL_CONNECTED){
-        //Serial.print(".");
-        delay(100);
-        retries ++;
-        if(retries > 25){
-          WiFi.disconnect();
-          ip = "Provisioning...";
-          provisioningWifi();
-          //return -1;
-        }
-    }
 
+  bool connected = !(ssid.equals("") && pass.equals("")) && connectWiFi(ssid, pass);
+  // The provisioning portal blocks until it connects; repeat only if it returns
+  // without a connection.
+  while(!connected){
+    WiFi.disconnect();
+    ip = "Provisioning...";
+    provisioningWifi();
+    connected = WiFi.status() == WL_CONNECTED;
+  }
   preferencesWS.end();
-    if(!SPIFFS.begin(true)){
-    }
- serverStart();
- return 0;
-}
-  
+
+  if(!SPIFFS.begin(true)){
+  }
+  serverStart();
+  return 0;
 }
 
 bool isMokaConnected(){
@@ -188,184 +188,120 @@ void sendBrew() {
   server->send(200, "text/html", index.readString());
 }
 void sendData() {
-  //File index = SPIFFS.open("/index.html", "r");
-  server->send(200, "text/plain", retrieveData());
+  server->send(200, "application/json", retrieveData());
 }
 void sendBrewData() {
-  //File index = SPIFFS.open("/index.html", "r");
-  server->send(200, "text/plain", retrieveExtractionData());
+  server->send(200, "application/json", retrieveExtractionData());
 }
-void sendPID() {
-  //File index = SPIFFS.open("/index.html", "r");
-  server->send(200, "text/plain", retrievePID());
-}
-void sendResistorValues() {
-  //File index = SPIFFS.open("/index.html", "r");
-  server->send(200, "text/plain", retrieveResistor());
-}
-
-void sendBoilValues() {
-  //File index = SPIFFS.open("/index.html", "r");
-  server->send(200, "text/plain", retrieveBoilInfo());
+void sendSettingsValues() {
+  server->send(200, "application/json", retrieveSettings());
 }
 void sendSettings() {
   File settings = SPIFFS.open("/settings.html", "r");
   server->send(200, "text/html", settings.readString());
 }
-void getBloomInfo() {
-  //File index = SPIFFS.open("/index.html", "r");
-  server->send(200, "text/plain", "0");
+// Reads a "#rrggbb" / "rrggbb" query argument. Returns false if missing or invalid.
+static bool readHexColorArg(const char *name, uint32_t &out) {
+  if (!server->hasArg(name)) return false;
+  String value = server->arg(name);
+  if (value.startsWith("#")) value = value.substring(1);
+  if (value.length() != 6) return false;
+  for (size_t k = 0; k < value.length(); k++) {
+    if (!isxdigit((unsigned char)value[k])) return false;
+  }
+  out = strtoul(value.c_str(), nullptr, 16);
+  return true;
 }
-void setBloomInfo() {
-  String BloomTime;
-  String BoilTemp;
-  String BloomOffset;
-  double current[3];
-  //getResistorValues(current);
-  if(server->hasArg("BloomTime")){
-    BloomTime = server->arg("BloomTime");
-      if(BloomTime.toDouble() >= 0.0){
-        setBloomTime(BloomTime.toDouble());
-        //setResistorValues(current[0],current[1], current[2]);
-      }
-      else {
-      BloomTime = "";
-    }
-  }
-  if(server->hasArg("BoilTemp")){
-    BoilTemp = server->arg("BoilTemp");
-      if(BoilTemp.toDouble() >= 0.0){
-        overrideBoiling(BoilTemp.toDouble());
-        //current[1]=N.toDouble();
-        //setResistorValues(current[0],current[1], current[2]);
-      }
-      else {
-      BoilTemp = "";
-    }
-  }
-  if(server->hasArg("BloomOffset")){
-    BloomOffset = server->arg("BloomOffset");
-      if(BloomOffset.toDouble() >= -20.0){
-        setBloomOffset(BloomOffset.toDouble());
-        //current[2]=B.toDouble();
-        //setResistorValues(current[0],current[1], current[2]);
-      }
-      else {
-      BloomOffset = "";
-    }
-  }
-  sendSettings();
+
+// Reads a numeric query argument. Returns false if missing, empty or below minVal.
+static bool readArg(const char *name, double minVal, double &out) {
+  if (!server->hasArg(name)) return false;
+  String value = server->arg(name);
+  if (value.length() == 0) return false;
+  double parsed = value.toDouble();
+  if (parsed < minVal) return false;
+  out = parsed;
+  return true;
 }
-void setResistors() {
-  String R;
-  String N;
-  String B;
-  double current[3];
-  getResistorValues(current);
-  if(server->hasArg("RVal")){
-    R = server->arg("RVal");
-      if(R.toDouble() >= 0.0){
-        current[0]=R.toDouble();
-        setResistorValues(current[0],current[1], current[2]);
-      }
-      else {
-      R = "";
-    }
-  }
-  if(server->hasArg("NVal")){
-    N = server->arg("NVal");
-      if(N.toDouble() >= 0.0){
-        current[1]=N.toDouble();
-        setResistorValues(current[0],current[1], current[2]);
-      }
-      else {
-      N = "";
-    }
-  }
-  if(server->hasArg("BVal")){
-    B = server->arg("BVal");
-      if(B.toDouble() >= 0.0){
-        current[2]=B.toDouble();
-        setResistorValues(current[0],current[1], current[2]);
-      }
-      else {
-      B = "";
-    }
-  }
-  sendSettings();
-}
+
 void handleUpdate() {
-  //File index = SPIFFS.open("/index.html", "r");
-  String P;
-  String I;
-  String D;
-  if(server->hasArg("PVal")){
-    P = server->arg("PVal");
-      double current[3];
-       getPID(current);
-      if(P.toDouble() >= 0.0){
-        current[0]=P.toDouble();
-        setPID(current[0],current[1], current[2]);
-      }
-      else {
-      P = "";
-    }
+  double value;
+
+  // PID
+  double pid[3];
+  getPID(pid);
+  bool pidChanged = false;
+  pidChanged |= readArg("PVal", 0.0, pid[0]);
+  pidChanged |= readArg("IVal", 0.0, pid[1]);
+  pidChanged |= readArg("DVal", 0.0, pid[2]);
+  if (pidChanged) setPID(pid[0], pid[1], pid[2]);
+
+  // Resistors
+  double resistors[6];
+  getResistorValues(resistors);
+  bool resistorsChanged = false;
+  resistorsChanged |= readArg("RVal", 0.0, resistors[0]);
+  resistorsChanged |= readArg("SHA", -1.0, resistors[1]);
+  resistorsChanged |= readArg("SHB", -1.0, resistors[2]);
+  resistorsChanged |= readArg("SHC", -1.0, resistors[3]);
+  if (resistorsChanged) setResistorValues(resistors[0], resistors[1], resistors[2], resistors[3]);
+
+  // Bloom / boil
+  if (readArg("BloomTime", 0.0, value)) setBloomTime(value);
+  if (readArg("BoilTemp", 0.0, value)) overrideBoiling(value);
+  if (readArg("BloomOffset", -20.0, value)) setBloomOffset(value);
+
+  // UI
+  uint32_t buttonColor;
+  if (readHexColorArg("ButtonColor", buttonColor)) ui_set_button_color(buttonColor);
+  if (readArg("Fahrenheit", 0.0, value)) ui_set_use_fahrenheit(value != 0);
+  if (readArg("Decimals", 0.0, value)) ui_set_show_decimals(value != 0);
+
+  server->send(200, "text/plain", "OK");
+}
+
+// Starts the HTTP server, retrying until port 80 is free; the provisioning
+// portal may still be releasing it right after provisioning finishes.
+static bool beginServer(){
+  for(int attempt = 0; attempt < 20; attempt++){
+    server->begin();
+    if(server->isListening()) return true;
+    server->close(); // closes the socket a failed bind() leaves open
+    vTaskDelay(pdMS_TO_TICKS(500));
   }
-  if(server->hasArg("IVal")){
-    I = server->arg("IVal");
-      double current[3];
-       getPID(current);
-      if(I.toDouble() >= 0.0){
-        current[1]=I.toDouble();
-        setPID(current[0],current[1], current[2]);
-      }
-      else {
-      I = "";
-    }
-  }
-  if(server->hasArg("DVal")){
-    D = server->arg("DVal");
-      double current[3];
-       getPID(current);
-      if(D.toDouble() >= 0.0){
-        current[2]=D.toDouble();
-        setPID(current[0],current[1], current[2]);
-      }
-      else {
-      D = "";
-    }
-  }
-  sendSettings();
+  return false;
 }
 
 void serverStart(){
- //server.reset();
-
+  server = new MokaWebServer(HTTP_PORT);
   server->on("/debug", HTTP_GET, sendIndex);
   server->on("/", HTTP_GET, sendBrew);
   server->on("/temperature", HTTP_GET, sendData);
   server->on("/brewInfo", HTTP_GET, sendBrewData);
-  //server->on("/tare", HTTP_GET, tareScale);
-  //server->on("/calibrate", HTTP_GET, calibrateScale);
-  server->on("/pidInfo", HTTP_GET, sendPID);
+  server->on("/settingsInfo", HTTP_GET, sendSettingsValues);
   server->on("/settings", HTTP_GET, sendSettings);
   server->on("/set", HTTP_GET, handleUpdate);
-  server->on("/boilInfo", HTTP_GET, sendBoilValues);
-  server->on("/resistorInfo", HTTP_GET, sendResistorValues);
-  server->on("/setResistor", HTTP_GET, setResistors);
-  server->on("/setBrewData", HTTP_GET, setBloomInfo);
-  server->on("/set", HTTP_GET, getBloomInfo);
-  
-//Serial.print("Server Starting")
-  server->begin();
-  ip = WiFi.localIP().toString();
-//ip = WiFi.localIP().toString();
-while(getMokaWifiStatus() == 0){
-        server->handleClient();
-        vTaskDelay((75) / portTICK_PERIOD_MS);
-      }
-    
+
+  if(beginServer()){
+    ip = WiFi.localIP().toString();
+    if(MDNS.begin(HOSTNAME)){
+      MDNS.addService("http", "tcp", HTTP_PORT);
+    }
+    while(getMokaWifiStatus() == 0){
+      server->handleClient();
+      vTaskDelay((75) / portTICK_PERIOD_MS);
+    }
   }
+  else{
+    ip = "Server error";
+  }
+
+  // Release the port so the next start (or provisioning) can bind it.
+  MDNS.end();
+  server->stop();
+  delete server;
+  server = nullptr;
+}
 
 void resetWiFi(){
   WiFi.disconnect();

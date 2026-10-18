@@ -1,135 +1,90 @@
-<!DOCTYPE HTML><html>
-<!-- Rui Santos - Complete project details at https://RandomNerdTutorials.com
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files.
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software. -->
+<!DOCTYPE HTML>
+<html>
 <head>
+  <title>MokaBot</title>
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script src="https://code.highcharts.com/highcharts.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     body {
       min-width: 310px;
-    	max-width: 800px;
-    	height: 400px;
+      max-width: 800px;
       margin: 0 auto;
+      font-family: Arial, sans-serif;
     }
     h2 {
-      font-family: Arial;
       font-size: 2.5rem;
       text-align: center;
+    }
+    .chart-box {
+      position: relative;
+      height: 400px;
     }
   </style>
 </head>
 <body>
   <h2>MokaBot</h2>
-  <div id="chart-temperature" class="container"></div>
+  <div class="chart-box"><canvas id="chart"></canvas></div>
+  <button onclick="document.location='settings'">Go to Settings</button>
 
-<button onclick="document.location='settings'">
-Go to Settings
-</button>
+  <script>
+    var MAX_POINTS = 250;
+    var BREWING = 2;
 
+    function formatTime(seconds) {
+      var s = Math.floor(seconds);
+      var h = Math.floor(s / 3600);
+      var m = String(Math.floor((s % 3600) / 60)).padStart(2, "0");
+      var sec = String(s % 60).padStart(2, "0");
+      return h > 0 ? String(h).padStart(2, "0") + ":" + m + ":" + sec : m + ":" + sec;
+    }
 
+    var chart = new Chart(document.getElementById("chart"), {
+      type: "line",
+      data: {
+        datasets: [
+          { label: "Temperature (°C)", data: [], yAxisID: "yTemp", borderColor: "#059e8a", backgroundColor: "#059e8a" },
+          { label: "Pressure (bar)", data: [], yAxisID: "yPressure", borderColor: "#ff7a5c", backgroundColor: "#ff7a5c" }
+        ]
+      },
+      options: {
+        animation: false,
+        maintainAspectRatio: false,
+        parsing: false,
+        pointRadius: 0,
+        borderWidth: 2,
+        tension: 0.2,
+        interaction: { mode: "index", intersect: false },
+        plugins: {
+          title: { display: true, text: "Moka Info" },
+          tooltip: { callbacks: { title: function (items) { return formatTime(items[0].parsed.x); } } }
+        },
+        scales: {
+          x: { type: "linear", ticks: { callback: formatTime } },
+          yTemp: { position: "left", min: 0, max: 120, title: { display: true, text: "Temperature (°C)" } },
+          yPressure: { position: "right", min: 0.85, max: 1.8, title: { display: true, text: "Pressure (bar)" }, grid: { drawOnChartArea: false } }
+        }
+      }
+    });
+
+    function addPoint(dataset, x, y) {
+      dataset.data.push({ x: x, y: y });
+      if (dataset.data.length > MAX_POINTS) dataset.data.shift();
+    }
+
+    function update() {
+      fetch("/brewInfo")
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function (d) {
+          if (d.status !== BREWING) return;
+          if (d.temp !== null && d.temp !== -127) addPoint(chart.data.datasets[0], d.time, d.temp);
+          if (d.pressure !== null) addPoint(chart.data.datasets[1], d.time, d.pressure);
+          chart.update();
+        })
+        .catch(console.error);
+    }
+
+    setInterval(update, 1000);
+  </script>
 </body>
-<script src="https://code.highcharts.com/modules/exporting.js"></script>
-<!-- optional -->
-<script src="https://code.highcharts.com/modules/offline-exporting.js"></script>
-<script src="https://code.highcharts.com/modules/export-data.js"></script>
-
-<script>
-var chartT = new Highcharts.Chart({
-  chart:{ renderTo : 'chart-temperature' },
-  title: { text: 'Moka Info' },
-  series: [{
-    name: 'Temperature',
-    showInLegend: false,
-    data: []
-  },{
-    name: 'Pressure',
-    yAxis: 1,
-    showInLegend: false,
-    data: []
-  }],
-  plotOptions: {
-    line: { animation: false,
-      dataLabels: { enabled: false }
-    }
-  },
-  xAxis: {
-    type: 'datetime',
-    labels: {
-      formatter: function() {
-        // 'this.value' is the timestamp in milliseconds
-        var totalSeconds = Math.floor(this.value / 1000);
-        
-        var hours = Math.floor(totalSeconds / 3600);
-        var minutes = Math.floor((totalSeconds % 3600) / 60);
-        var seconds = totalSeconds % 60;
-
-        // Pad numbers with leading zeros (e.g., 05 instead of 5)
-        var displayMinutes = minutes.toString().padStart(2, '0');
-        var displaySeconds = seconds.toString().padStart(2, '0');
-
-        if (hours > 0) {
-          var displayHours = hours.toString().padStart(2, '0');
-          return `${displayHours}:${displayMinutes}:${displaySeconds}`; // HH:MM:SS
-        }
-
-        return `${displayMinutes}:${displaySeconds}`; // MM:SS (for shorter durations)
-      }
-    }
-  },
-  yAxis: [{
-    min: 0,
-    max: 120,
-    title: { text: 'Temperature (Celsius)' },
-    color: '#059e8a'
-    //title: { text: 'Temperature (Fahrenheit)' }
-  },
-  {
-     min: 0.850,
-    max: 2.0,
-    title: { text: 'Pressure (Bar)' },
-    opposite: true,
-    color: '#ff9e8a'
-  }
-],
-  credits: { enabled: true }
-});
-setInterval(function ( ) {
-  var xhttp = new XMLHttpRequest();
-  xhttp.onreadystatechange = function() {
-    if (this.readyState == 4 && this.status == 200) {
-      //var x = (new Date()).getTime();
-      var response = this.responseText;
-          y = parseFloat(response.split("_")[0]);
-          y2 = parseFloat(response.split("_")[1]);
-          x = parseFloat(response.split("_")[2])*1000;
-          console.log(y);
-          console.log(y2);
-      //console.log(this.responseText);
-      if(parseInt(response.split("_")[3]) == 2){
-        if(chartT.series[0].data.length > 250) {
-          if(!isNaN(parseFloat(response.split("_")[0]))){
-            chartT.series[0].addPoint([x, y], true, true, true);
-          }
-          chartT.series[1].addPoint([x, y2], true, true, true);
-        } else {
-          if(!isNaN(parseFloat(response.split("_")[0]))){
-            chartT.series[0].addPoint([x, y], true, false, true);
-          }
-          chartT.series[1].addPoint([x, y2], true, false, true);
-        }
-      }
-      else{
-        //chartT.series[1].setData([], true);
-        //chartT.series[0].setData([], true);
-      }
-    }
-  };
-  xhttp.open("GET", "/brewInfo", true);
-  xhttp.send();
-}, 1000 ) ;
-</script>
 </html>

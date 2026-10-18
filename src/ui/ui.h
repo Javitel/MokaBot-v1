@@ -68,6 +68,14 @@ extern lv_obj_t * ui____initial_actions0;
 // UI INIT
 void ui_init(void);
 void ui_initBoot(void);
+void ui_load_preferences(void);
+bool ui_show_decimals(void);
+bool ui_use_fahrenheit(void);
+// Thread safe: queues the colour, applied and saved on the next LVGL cycle.
+void ui_set_button_color(uint32_t rgb);
+uint32_t ui_get_button_color(void);
+void ui_set_use_fahrenheit(bool enabled);
+void ui_set_show_decimals(bool enabled);
 
 void setCurrentTempLabel(const char * text);
 void setTargetTempLabel(const char * text);

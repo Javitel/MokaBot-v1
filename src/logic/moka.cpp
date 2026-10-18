@@ -37,27 +37,32 @@ double elapsedTime = 0;
 
 double refVoltage = 0;
 double resistorFixed = 2000;
-double ntcRefResistor=50000;
-double ntcBeta=3950;
+//double ntcRefResistor=50000;
+//double ntcBeta=3950;
+// Steinhart-Hart coefficients of the NTC.
+double shA=0.9032071364/1000;
+double shB=2.086434938/10000;
+double shC=1.597510723/10000000;
 double ntcValue = 0;
 
 double current = 0.0;
 int mokaStatus = 0;
 bool connected=false;
-bool relayControl;
 
 double defaultp = 40.2;//0.03 0.003;
 double defaulti = 0.00075;//0.00045;//0.0004;
 double defaultd = 0.085;//0.000002;
 
 double p, i, d;  
-// AutoPIDRelay myPID(&temperature, &target, &relayControl, 250, defaultp, defaulti, defaultd);
 
 double timeWindow =250;
 double pidValue;
 AutoPID myPID(&temperature, &target, &pidValue, 0, timeWindow, defaultp, defaulti, defaultd);
 
 Preferences MokaPreferences;
+
+// Handle of the running brewTimer task, NULL when it is not running.
+static TaskHandle_t brewTimerTask = NULL;
 
 int getrelayStatus(int status){
   if (status == LOW){
@@ -95,12 +100,9 @@ int getrelayStatus(int status){
           retry = false;
           average += aux;
         }
-      //}
-      //else{
-      //  i--;
-      //}
+
       
-      vTaskDelay( pdMS_TO_TICKS( 17));//delay(10);
+      vTaskDelay( pdMS_TO_TICKS( 10));//delay(10);
     }
     Serial.print("result  average: ");
     Serial.println(average/samples);
@@ -110,7 +112,7 @@ int getrelayStatus(int status){
 void updateSensors(void *param){
   
    //ads.startADCReading(0, true);
-     TickType_t xLastWakeTime;
+     TickType_t xLastWakeTime = xTaskGetTickCount();
 const TickType_t xFrequency = pdMS_TO_TICKS(150);
 BaseType_t xWasDelayed;
   while(true){
@@ -126,7 +128,7 @@ BaseType_t xWasDelayed;
 void updateAmbientPressure(void *param){
 
     // Initialise the xLastWakeTime variable with the current time.
-TickType_t xLastWakeTime;
+TickType_t xLastWakeTime = xTaskGetTickCount();
 const TickType_t xFrequency = pdMS_TO_TICKS(1000);
 BaseType_t xWasDelayed;
   while(true){
@@ -142,8 +144,11 @@ void recoverPid(){
 }
 void recoverResistors(){
   resistorFixed = MokaPreferences.getFloat("resistorFixed", resistorFixed);
-  ntcRefResistor = MokaPreferences.getFloat("ntcRefResistor", ntcRefResistor);
-  ntcBeta = MokaPreferences.getFloat("ntcBeta", ntcBeta);
+  //ntcRefResistor = MokaPreferences.getFloat("ntcRefResistor", ntcRefResistor);
+  //ntcBeta = MokaPreferences.getFloat("ntcBeta", ntcBeta);
+  shA = MokaPreferences.getDouble("shA", shA);
+  shB = MokaPreferences.getDouble("shB", shB);
+  shC = MokaPreferences.getDouble("shC", shC);
 }
 
 void recoverBrewSettings(){
@@ -158,10 +163,14 @@ void savePid(double newP, double newI, double newD){
   MokaPreferences.putFloat("savedI", newI);
   MokaPreferences.putFloat("savedD", newD);
 }
-void saveResistorValues(double newR, double newN, double newB){
+void saveResistorValues(double newR, double newA, double newB, double newC){
   MokaPreferences.putFloat("resistorFixed", newR);
-  MokaPreferences.putFloat("ntcRefResistor", newN);
-  MokaPreferences.putFloat("ntcBeta", newB);
+  //MokaPreferences.putFloat("ntcRefResistor", newN);
+  //MokaPreferences.putFloat("ntcBeta", newB);
+  // Doubles: the coefficients are tiny and need the extra precision.
+  MokaPreferences.putDouble("shA", newA);
+  MokaPreferences.putDouble("shB", newB);
+  MokaPreferences.putDouble("shC", newC);
 }
 
 void init() {
@@ -184,9 +193,8 @@ myPID.setGains(p,i,d);
 
 void process(void *param){
  // TickType_t startTime = xTaskGetTickCount();
-  double aux;
-  TickType_t xLastWakeTime;
-const TickType_t xFrequency = pdMS_TO_TICKS(100);
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+const TickType_t xFrequency = pdMS_TO_TICKS(250);
 BaseType_t xWasDelayed;
   while(true){
 //vTaskDelay((150) / portTICK_PERIOD_MS);
@@ -199,7 +207,7 @@ BaseType_t xWasDelayed;
       connected=true;
         if(!running){
     pidUpdate();
-    if(getMokaStatus() == 2 && brewstart == false && (current + bloomOffset) >= getCalibratedTemp()){
+    if(getMokaStatus() == 2 && brewstart == false && (current) >= getCalibratedTemp()+ bloomOffset){
       brewstart = true;
       startTime = millis() - elapsedTime;
       //startTime = xTaskGetTickCount();
@@ -223,21 +231,38 @@ BaseType_t xWasDelayed;
   }
 
   }
-      if(getMokaStatus() == 2 && brewstart == true){
-      //aux = xTaskGetTickCount() - startTime;
-      aux = millis() - startTime + elapsedTime;
-      
-      if(bloomTime >= bloomCurrentTargetTime || bloomfinished == true){
-        bloomfinished = true;
-        target = boil;
-      }
-      else{bloomTime = aux/1000;}
-      brewTime = aux/1000;
+    // Start the brew/bloom timer task once the brew begins; it deletes itself
+    // as soon as the status leaves 2.
+    if(getMokaStatus() == 2 && brewstart == true && brewTimerTask == NULL){
+      xTaskCreatePinnedToCore(brewTimer, "brewTimer", 2048, NULL, 6, &brewTimerTask, 1);
     }
 xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
     //vTaskDelay( pdMS_TO_TICKS( 30 ));
 }
 
+}
+
+// Updates brew and bloom times every 100 ms while extracting. Created by
+// process() when the brew starts; runs in its own task because process()
+// blocks for a whole PID time window in pidUpdate(). Ends itself as soon as
+// the moka status is no longer 2.
+void brewTimer(void *param){
+  double aux;
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  const TickType_t xFrequency = pdMS_TO_TICKS(50);
+  while(getMokaStatus() == 2){
+    aux = millis() - startTime + elapsedTime;
+
+    if(bloomTime >= bloomCurrentTargetTime || bloomfinished == true){
+      bloomfinished = true;
+      target = boil;
+    }
+    else{bloomTime = aux/1000;}
+    brewTime = aux/1000;
+    xTaskDelayUntil( &xLastWakeTime, xFrequency );
+  }
+  brewTimerTask = NULL;
+  vTaskDelete(NULL);
 }
 
 void setBloomTime(double overrideTime){
@@ -298,34 +323,20 @@ double getBrewTime(){
  }
 
 void updateTempNTC(){
-  refVoltage = averageADSRead(3,2, 25, refVoltage);//ads.readADC_Differential_1_3();//
+  refVoltage = averageADSRead(3,5, 25, refVoltage);//ads.readADC_Differential_1_3();//
   //refVoltage= refVoltage * 0.1875/1000;  f
   refVoltage = ads.toVoltage(1)*refVoltage;
   double temp;
-   //float refMultiplier = 0.1875/1000;
- //957.0;//10000;//9980.0;
- double beta = ntcBeta;
+
 double resistance;
  double lnR;
  double kelvin;
  double vm = 0.0;
  double aux = 0;
-  double A=0.9032071364/1000;
-  double B=2.086434938/10000;
-  double C=1.597510723/10000000;
-  ntcValue = averageADSRead(0,3, 75, ntcValue);//ads.readADC_Differential_0_3();//
-  Serial.print(refVoltage);
-Serial.print("-");
-//vm=( ntcValue ) * 0.1875/1000;     
+  ntcValue = averageADSRead(0,12, 75, ntcValue);//ads.readADC_Differential_0_3();//  
 vm = ads.toVoltage(1)*ntcValue;
-Serial.print(vm);
-Serial.print("-");
-//resistance = resistorFixed / ((refVoltage/vm)-1); 
 resistance = (refVoltage - vm)*(resistorFixed/vm);
-
-Serial.print(resistance);
-Serial.print("-");
-aux = A + (B * log(resistance)) + (C * pow(log(resistance), 3));
+aux = shA + (shB * log(resistance)) + (shC * pow(log(resistance), 3));
 kelvin =1.0/aux;
 if(abs((((kelvin- 273.15) + temp) /2) - temp) < 1){
   temp = ((kelvin- 273.15) * 0.75 )+ temp * 0.25;
@@ -334,7 +345,6 @@ else{
   temp = kelvin- 273.15;
 }
 
-//temp = kelvin- 273.15;
   Serial.println(temp);
   // Serial.println("end");
   if(temp>0){ 
@@ -389,8 +399,11 @@ void getPID(double *pid){
 void getResistorValues(double *data){
   //double aux[3];
   data[0] = resistorFixed;
-  data[1] = ntcRefResistor;
-  data[2] = ntcBeta;
+  //data[1] = ntcRefResistor;
+  //data[2] = ntcBeta;
+  data[1] = shA;
+  data[2] = shB;
+  data[3] = shC;
   //return aux;
 }
 
@@ -401,10 +414,11 @@ void setPID(double newP, double newI, double newD){
   myPID.setGains(p,i,d);
   MokaPreferences.end(); 
 }
-void setResistorValues(double newR, double newN, double newB){
+void setResistorValues(double newR, double newA, double newB, double newC){
   MokaPreferences.begin("my-app", false);
-  resistorFixed = newR; ntcRefResistor = newN; ntcBeta = newB;
-  saveResistorValues(newR, newN, newB);
+  //resistorFixed = newR; ntcRefResistor = newN; ntcBeta = newB;
+  shA = newA; shB = newB; shC = newC;
+  saveResistorValues(newR, newA, newB, newC);
   MokaPreferences.end(); 
 }
 

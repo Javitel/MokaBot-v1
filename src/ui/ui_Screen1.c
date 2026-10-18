@@ -4,10 +4,17 @@
 // Project name: MokaBot
 
 #include "ui.h"
+#include "nvs.h"
+
+#define UI_NVS_NAMESPACE "ui"
+#define UI_NVS_COLOR_KEY "btnColor"
+#define UI_NVS_DECIMALS_KEY "decimals"
+#define UI_NVS_FAHRENHEIT_KEY "fahrenheit"
+
 //orange
-//uint32_t color = 0xeb9039; 
+uint32_t color = 0xeb9039; 
 //green
-uint32_t color = 0xff388e3c;
+//uint32_t color = 0xff388e3c;
 //blue
 //uint32_t color = 0xff4040ff;
 
@@ -175,16 +182,217 @@ void ui_ScreenBoot_screen_init(void)
     lv_obj_center(ui_SplashImage);
 }
 
+static lv_obj_t * ui_ButtonColor;
+static lv_obj_t * ui_ColorPanel;
+static lv_obj_t * ui_ButtonUnits;
+static lv_obj_t * ui_LabelUnits;
+//Color Selector Objects
+static lv_obj_t * ui_ColorWheel;
+
+static lv_obj_t * ui_BrightnessSlider;
+static lv_obj_t * ui_ColorSave;
+
+static volatile bool showDecimals = true;
+static volatile bool useFahrenheit = false;
+
+// Applies the accent colour to every button on the main screen.
+static void apply_button_color(lv_color_t c)
+{
+    lv_obj_t * buttons[] = { ui_ColorSave,ui_Button1, ui_Button2, ui_Button3, ui_Button4, ui_Button5, ui_ButtonIP, ui_ButtonColor, ui_ButtonUnits };
+    for(size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++) {
+        lv_obj_set_style_bg_color(buttons[i], c, LV_STATE_DEFAULT);
+    }
+}
+
+// Takes the wheel's current colour (hue/saturation from the wheel, brightness
+// from the slider) as the new button colour.
+static void update_color_from_wheel(lv_obj_t * wheel)
+{
+    lv_color_t c = lv_colorwheel_get_rgb(wheel);
+    color = lv_color_to32(c) & 0xFFFFFF;
+    apply_button_color(c);
+}
+
+static void color_wheel_event(lv_event_t * e)
+{
+    update_color_from_wheel(lv_event_get_target(e));
+}
+
+static void brightness_slider_event(lv_event_t * e)
+{
+    lv_obj_t * wheel = lv_event_get_user_data(e);
+    lv_color_hsv_t hsv = lv_colorwheel_get_hsv(wheel);
+    hsv.v = lv_slider_get_value(lv_event_get_target(e));
+    lv_colorwheel_set_hsv(wheel, hsv);
+    update_color_from_wheel(wheel);
+}
+
+static bool nvs_read_u32(const char * key, uint32_t * out)
+{
+    nvs_handle_t handle;
+    if(nvs_open(UI_NVS_NAMESPACE, NVS_READONLY, &handle) != ESP_OK) return false;
+    bool found = nvs_get_u32(handle, key, out) == ESP_OK;
+    nvs_close(handle);
+    return found;
+}
+
+static void nvs_write_u32(const char * key, uint32_t value)
+{
+    nvs_handle_t handle;
+    if(nvs_open(UI_NVS_NAMESPACE, NVS_READWRITE, &handle) != ESP_OK) return;
+    nvs_set_u32(handle, key, value);
+    nvs_commit(handle);
+    nvs_close(handle);
+}
+
+// Loads the saved UI preferences from NVS; keeps the defaults if none are stored.
+void ui_load_preferences(void)
+{
+    uint32_t saved;
+    if(nvs_read_u32(UI_NVS_COLOR_KEY, &saved)) color = saved;
+    if(nvs_read_u32(UI_NVS_DECIMALS_KEY, &saved)) showDecimals = saved != 0;
+    if(nvs_read_u32(UI_NVS_FAHRENHEIT_KEY, &saved)) useFahrenheit = saved != 0;
+}
+
+bool ui_show_decimals(void)
+{
+    return showDecimals;
+}
+
+bool ui_use_fahrenheit(void)
+{
+    return useFahrenheit;
+}
+
+// Short click toggles Celsius/Fahrenheit, long press toggles decimals.
+// SHORT_CLICKED (not CLICKED) so a long press does not also switch units.
+static void units_button_event(lv_event_t * e)
+{
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_SHORT_CLICKED) {
+        useFahrenheit = !useFahrenheit;
+        lv_label_set_text(ui_LabelUnits, useFahrenheit ? "°F" : "°C");
+        nvs_write_u32(UI_NVS_FAHRENHEIT_KEY, useFahrenheit);
+    }
+    else if(code == LV_EVENT_LONG_PRESSED) {
+        showDecimals = !showDecimals;
+        nvs_write_u32(UI_NVS_DECIMALS_KEY, showDecimals);
+    }
+}
+// Colour requested from another task (the web server); applied by
+// pending_settings_timer in the LVGL context, since LVGL is not thread safe.
+static volatile bool colorPending = false;
+static volatile uint32_t pendingColor;
+
+void ui_set_button_color(uint32_t rgb)
+{
+    pendingColor = rgb & 0xFFFFFF;
+    colorPending = true;
+}
+
+uint32_t ui_get_button_color(void)
+{
+    return color;
+}
+
+// Unit/decimals requested from another task: -1 = nothing pending, else 0/1.
+static volatile int8_t pendingFahrenheit = -1;
+static volatile int8_t pendingDecimals = -1;
+
+void ui_set_use_fahrenheit(bool enabled)
+{
+    pendingFahrenheit = enabled ? 1 : 0;
+}
+
+void ui_set_show_decimals(bool enabled)
+{
+    pendingDecimals = enabled ? 1 : 0;
+}
+
+// Applies settings queued by other tasks, in the LVGL context.
+static void pending_settings_timer(lv_timer_t * timer)
+{
+    if(colorPending) {
+        colorPending = false;
+        color = pendingColor;
+        apply_button_color(lv_color_hex(color));
+        nvs_write_u32(UI_NVS_COLOR_KEY, color);
+    }
+    if(pendingFahrenheit >= 0) {
+        useFahrenheit = pendingFahrenheit == 1;
+        pendingFahrenheit = -1;
+        lv_label_set_text(ui_LabelUnits, useFahrenheit ? "°F" : "°C");
+        nvs_write_u32(UI_NVS_FAHRENHEIT_KEY, useFahrenheit);
+    }
+    if(pendingDecimals >= 0) {
+        showDecimals = pendingDecimals == 1;
+        pendingDecimals = -1;
+        nvs_write_u32(UI_NVS_DECIMALS_KEY, showDecimals);
+    }
+}
+
+// Hides the panel instead of deleting it: the Save button lives inside the
+// panel, and freeing it while LVGL is still dispatching its event crashes.
+static void color_close_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    nvs_write_u32(UI_NVS_COLOR_KEY, color);
+    lv_obj_set_style_bg_color(e->current_target, lv_color_hex(color), LV_STATE_DEFAULT);
+    lv_obj_add_flag(ui_ColorPanel, LV_OBJ_FLAG_HIDDEN);
+
+}
+
+// Builds the colour panel once, hidden; it is shown/hidden from then on.
+static void create_color_panel(void)
+{
+    ui_ColorPanel = lv_obj_create(ui_Screen1);
+    lv_obj_set_size(ui_ColorPanel, 260, 300);
+    lv_obj_center(ui_ColorPanel);
+    lv_obj_clear_flag(ui_ColorPanel, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ui_ColorPanel, LV_OBJ_FLAG_HIDDEN);
+
+    ui_ColorWheel = lv_colorwheel_create(ui_ColorPanel, true);
+    lv_obj_set_size(ui_ColorWheel, 170, 170);
+    lv_obj_align(ui_ColorWheel, LV_ALIGN_TOP_MID, 0, 0);
+    // Brightness has its own slider, so keep the wheel on hue only.
+    lv_colorwheel_set_mode_fixed(ui_ColorWheel, true);
+    lv_obj_add_event_cb(ui_ColorWheel, color_wheel_event, LV_EVENT_VALUE_CHANGED, NULL);
+
+    ui_BrightnessSlider = lv_slider_create(ui_ColorPanel);
+    lv_obj_set_width(ui_BrightnessSlider, 200);
+    lv_obj_align(ui_BrightnessSlider, LV_ALIGN_TOP_MID, 0, 190);
+    lv_obj_set_style_bg_color(ui_BrightnessSlider, lv_color_hex(color), LV_STATE_DEFAULT);
+
+    // Lower bound keeps the buttons from turning fully black.
+    lv_slider_set_range(ui_BrightnessSlider, 10, 100);
+    lv_obj_add_event_cb(ui_BrightnessSlider, brightness_slider_event, LV_EVENT_VALUE_CHANGED, ui_ColorWheel);
+
+    ui_ColorSave = lv_btn_create(ui_ColorPanel);
+    lv_obj_set_size(ui_ColorSave, 100, 40);
+    lv_obj_align(ui_ColorSave, LV_ALIGN_BOTTOM_MID, 0, 0);
+    lv_obj_set_style_bg_color(ui_ColorSave, lv_color_hex(color), LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(ui_ColorSave, color_close_event, LV_EVENT_CLICKED, NULL);
+
+    lv_obj_t * label = lv_label_create(ui_ColorSave);
+    lv_label_set_text(label, "Save");
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_center(label);
+}
+
+static void color_open_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    // Sync the controls with the current colour, then show the panel on top.
+    lv_colorwheel_set_rgb(ui_ColorWheel, lv_color_hex(color));
+    lv_slider_set_value(ui_BrightnessSlider, lv_colorwheel_get_hsv(ui_ColorWheel).v, LV_ANIM_OFF);
+    lv_obj_move_foreground(ui_ColorPanel);
+    lv_obj_clear_flag(ui_ColorPanel, LV_OBJ_FLAG_HIDDEN);
+}
+
 void ui_Screen1_screen_init(void)
 {
     ui_Screen1 = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_Screen1, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
-
-    // ui_SplashImage = lv_img_create(ui_Screen1);
-    // lv_img_set_src(ui_SplashImage, &my_raw_img_dsc);
-    // lv_obj_align(ui_SplashImage, LV_ALIGN_CENTER, 0, 0);
-    // //lv_obj_set_size(ui_SplashImage, 420, 280);
-    // lv_obj_center(ui_SplashImage);
 
     ui_Button1 = lv_btn_create(ui_Screen1);
     lv_obj_set_width(ui_Button1, 100);
@@ -241,7 +449,7 @@ void ui_Screen1_screen_init(void)
     lv_obj_set_width(ui_CurrentTemp, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_CurrentTemp, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_CurrentTemp, -100);
-    lv_obj_set_y(ui_CurrentTemp, 0);
+    lv_obj_set_y(ui_CurrentTemp, 5);
     lv_obj_set_align(ui_CurrentTemp, LV_ALIGN_CENTER);
     lv_label_set_text(ui_CurrentTemp, "DISC.");
     lv_obj_set_style_text_font(ui_CurrentTemp, &lv_font_montserrat_48, LV_PART_MAIN | LV_STATE_DEFAULT);
@@ -252,7 +460,7 @@ void ui_Screen1_screen_init(void)
     lv_obj_set_x(ui_ProTemp, -165);
     lv_obj_set_y(ui_ProTemp, 45);
     lv_obj_set_align(ui_ProTemp, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_ProTemp, "25c");
+    lv_label_set_text(ui_ProTemp, "");
     lv_obj_set_style_text_font(ui_ProTemp, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_ProWeigth = lv_label_create(ui_Screen1);
@@ -261,7 +469,7 @@ void ui_Screen1_screen_init(void)
     lv_obj_set_x(ui_ProWeigth, -30);
     lv_obj_set_y(ui_ProWeigth, 45);
     lv_obj_set_align(ui_ProWeigth, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_ProWeigth, "0.0g");
+    lv_label_set_text(ui_ProWeigth, "");
     lv_obj_set_style_text_font(ui_ProWeigth, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_TargetTemp = lv_label_create(ui_Screen1);
@@ -311,9 +519,9 @@ void ui_Screen1_screen_init(void)
     lv_obj_set_width(ui_CurrentPressure, LV_SIZE_CONTENT);   /// 1
     lv_obj_set_height(ui_CurrentPressure, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_x(ui_CurrentPressure, -100);
-    lv_obj_set_y(ui_CurrentPressure, -80);
+    lv_obj_set_y(ui_CurrentPressure, -60);
     lv_obj_set_align(ui_CurrentPressure, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_CurrentPressure, "1.000bar");
+    lv_label_set_text(ui_CurrentPressure, "0.000bar");
     lv_obj_set_style_text_font(ui_CurrentPressure, &lv_font_montserrat_48, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_ExtraInfo = lv_label_create(ui_Screen1);
@@ -327,31 +535,13 @@ void ui_Screen1_screen_init(void)
 
     ui_ButtonIP = lv_btn_create(ui_Screen1);
     lv_obj_set_width(ui_ButtonIP, 160);
-    lv_obj_set_height(ui_ButtonIP, 20);
+    lv_obj_set_height(ui_ButtonIP, 25);
     lv_obj_set_x(ui_ButtonIP, -100);
     lv_obj_set_y(ui_ButtonIP, -120);
     lv_obj_set_align(ui_ButtonIP, LV_ALIGN_CENTER);
     lv_obj_add_flag(ui_ButtonIP, LV_OBJ_FLAG_SCROLL_ON_FOCUS);     /// Flags
     lv_obj_clear_flag(ui_ButtonIP, LV_OBJ_FLAG_SCROLLABLE);      /// Flags
     lv_obj_set_style_bg_color(ui_ButtonIP, lv_color_hex(color), LV_STATE_DEFAULT);
-
-    // ui_ButtonScale = lv_btn_create(ui_Screen1);
-    // lv_obj_set_width(ui_ButtonScale, 50);
-    // lv_obj_set_height(ui_ButtonScale, 20);
-    // lv_obj_set_x(ui_ButtonScale, -10);
-    // lv_obj_set_y(ui_ButtonScale, 45);
-    // lv_obj_set_align(ui_ButtonScale, LV_ALIGN_CENTER);
-    // lv_obj_add_flag(ui_ButtonScale, LV_OBJ_FLAG_SCROLL_ON_FOCUS);     /// Flags
-    // lv_obj_clear_flag(ui_ButtonScale, LV_OBJ_FLAG_SCROLLABLE);  
-    // lv_obj_set_style_bg_color(ui_ButtonScale, lv_color_hex(color), LV_STATE_DEFAULT);
-
-    // ui_ProScaleLabel = lv_label_create(ui_ButtonScale);
-    // lv_obj_set_width(ui_ProScaleLabel, LV_SIZE_CONTENT);   /// 1
-    // lv_obj_set_height(ui_ProScaleLabel, LV_SIZE_CONTENT);    /// 1
-    // lv_obj_set_align(ui_ProScaleLabel, LV_ALIGN_CENTER);
-    // lv_obj_set_align(ui_ProScaleLabel, LV_ALIGN_CENTER);
-    // lv_label_set_text(ui_ProScaleLabel, "Scale");
-    // lv_obj_set_style_text_font(ui_ProScaleLabel, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_CurrentIPLabel = lv_label_create(ui_ButtonIP);
     lv_obj_set_width(ui_CurrentIPLabel, LV_SIZE_CONTENT);   /// 1
@@ -361,8 +551,30 @@ void ui_Screen1_screen_init(void)
     lv_label_set_text(ui_CurrentIPLabel, "Disconnected");
     lv_obj_set_style_text_font(ui_CurrentIPLabel, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
 
-    //lv_obj_move_foreground(ui_SplashImage);
+    ui_ButtonColor = lv_btn_create(ui_Screen1);
+    lv_obj_set_size(ui_ButtonColor, 50, 50);
+    lv_obj_align(ui_ButtonColor, LV_ALIGN_TOP_RIGHT, -5, 5);
+    lv_obj_clear_flag(ui_ButtonColor, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(ui_ButtonColor, lv_color_hex(color), LV_STATE_DEFAULT);
+    lv_obj_t * ui_LabelColor = lv_label_create(ui_ButtonColor);
+    lv_label_set_text(ui_LabelColor, LV_SYMBOL_EDIT);
+    lv_obj_set_style_text_font(ui_LabelColor, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_center(ui_LabelColor);
+    lv_obj_add_event_cb(ui_ButtonColor, color_open_event, LV_EVENT_CLICKED, NULL);
 
+    ui_ButtonUnits = lv_btn_create(ui_Screen1);
+    lv_obj_set_size(ui_ButtonUnits, 50, 50);
+    lv_obj_align(ui_ButtonUnits, LV_ALIGN_TOP_RIGHT, -5, 60);
+    lv_obj_clear_flag(ui_ButtonUnits, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(ui_ButtonUnits, lv_color_hex(color), LV_STATE_DEFAULT);
+    ui_LabelUnits = lv_label_create(ui_ButtonUnits);
+    lv_label_set_text(ui_LabelUnits, useFahrenheit ? "°F" : "°C");
+    lv_obj_set_style_text_font(ui_LabelUnits, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_center(ui_LabelUnits);
+    lv_obj_add_event_cb(ui_ButtonUnits, units_button_event, LV_EVENT_ALL, NULL);
+
+    create_color_panel();
+    lv_timer_create(pending_settings_timer, 200, NULL);
 
     lv_obj_add_event_cb(ui_Button1, ui_event_Button1, LV_EVENT_ALL, NULL);
     lv_obj_add_event_cb(ui_Button2, ui_event_Button2, LV_EVENT_ALL, NULL);

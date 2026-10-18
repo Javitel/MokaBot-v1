@@ -1,128 +1,225 @@
-<!DOCTYPE HTML><html><head>
+<!DOCTYPE HTML>
+<html>
+<head>
   <title>Moka Bot Settings</title>
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  </head><body onload="fillData()">
-  <form action="/set" method="get" target="_self">
-    Controller P: <input type="number" placeholder="1.0" step="0.000001" min="0" max="100" value="P" id="PVal" name="PVal"/>
-    <input type="submit" value="set P">
-  </form><br>
-  <form action="/set" method="get" target="_self">
-    Controller I: <input type="number" placeholder="1.0" step="0.000001" min="0" max="100" value="I" id="IVal" name="IVal"/>
-    <input type="submit" value="set I">
-  </form><br>
-  <form action="/set" method="get" target="_self">
-    Controller D: <input type="number" placeholder="1.0" step="0.000001" min="0" max="100" value="D" id="DVal" name="DVal"/>
-    <input type="submit" value="set D">
-  </form><br>
-  <form action="/set" method="get" target="_self">
-    MQTT Broker URL: <input type="text" name="mqttBroker">
-    <input type="submit" value="set Mqtt Broker">
-  </form><br>
+  <script src="https://cdn.jsdelivr.net/npm/@jaames/iro@5.5.2/dist/iro.min.js"></script>
+  <style>
+    .color-editor { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
+    .color-fields input[type=number] { width: 4.5em; }
+    .color-fields input[type=text] { width: 6em; font-family: monospace; }
+    .swatches { display: flex; gap: 6px; margin-top: 8px; }
+    .swatch { width: 28px; height: 28px; border: 1px solid #888; border-radius: 4px; cursor: pointer; padding: 0; }
+    .preview { margin-top: 10px; width: 100px; height: 50px; border-radius: 6px; color: #fff;
+               font: bold 16px Arial, sans-serif; display: flex; align-items: center; justify-content: center; }
+  </style>
+</head>
+<body>
+  <form id="settings" action="/set" method="get" target="_self">
 
-  <form action="/setResistor" method="get" target="_self">
-    Resistor value: <input type="number" placeholder="10000" step="1" min="0" max="200000" value="R" id="RVal" name="RVal"/>
-    <input type="submit" value="set Passive resistor value">
-  </form><br>
-  <form action="/setResistor" method="get" target="_self">
-    NTC Value: <input type="number" placeholder="50000" step="1" min="0" max="200000" value="N" id="NVal" name="NVal"/>
-    <input type="submit" value="set NTC resistor value">
-  </form><br>
-  <form action="/setResistor" method="get" target="_self">
-    NTC Beta value: <input type="number" placeholder="3950" step="1" min="0" max="10000" value="B" id="BVal" name="BVal"/>
-    <input type="submit" value="set NTC resistor beta">
-  </form><br>
+    <fieldset>
+      <legend>PID controller</legend>
+      <label for="PVal">P:</label>
+      <input type="number" id="PVal" name="PVal" placeholder="1.0" step="0.000001" min="0" max="100"><br>
+      <label for="IVal">I:</label>
+      <input type="number" id="IVal" name="IVal" placeholder="1.0" step="0.000001" min="0" max="100"><br>
+      <label for="DVal">D:</label>
+      <input type="number" id="DVal" name="DVal" placeholder="1.0" step="0.000001" min="0" max="100">
+    </fieldset>
 
-    <form action="/setBrewData" method="get" target="_self">
-    Bloom phase time: <input type="number" placeholder="0" step="1" min="0" max="100" value="BloomTime" id="BloomTime" name="BloomTime"/>
-    <input type="submit" value="set bloom phase time in seconds">
-  </form><br>
-  <form action="/setBrewData" method="get" target="_self">
-    boiling point temp: <input type="number" placeholder="0" step="0.01" min="0" max="110" value="BoilTemp" id="BoilTemp" name="BoilTemp"/>
-    <input type="submit" value="set boiling temp manually">
-  </form><br>
-  <form action="/setBrewData" method="get" target="_self">
-    Bloom Offset temp: <input type="number" placeholder="0" step="1" min="-15" max="15" value="BloomOffset" id="BloomOffset" name="BloomOffset"/>
-    <input type="submit" value="set bloom offset">
-  </form><br>
-  
-  <!-- <form action="/tare" method="get" target="_self">
-    Tare Scale
-    <input type="submit" value="tare">
-  </form><br>
-  <form action="/calibrate" method="get" target="_self">
-    Calibrate weight: <input type="number" placeholder="100.0" step="0.1" min="0" max="100" value="100.0" id="calibrate" name="calibrate"/>
-    <input type="submit" value="calibrate">
-  </form> -->
+    <fieldset>
+      <legend>MQTT</legend>
+      <label for="mqttBroker">Broker URL:</label>
+      <input type="text" id="mqttBroker" name="mqttBroker">
+    </fieldset>
+
+    <fieldset>
+      <legend>Thermistor</legend>
+      <label for="RVal">Passive resistor value:</label>
+      <input type="number" id="RVal" name="RVal" placeholder="10000" step="1" min="0" max="200000"><br>
+      <label for="SHA">Steinhart-Hart A:</label>
+      <input type="number" id="SHA" name="SHA" placeholder="9.032071364e-4" step="any"><br>
+      <label for="SHB">Steinhart-Hart B:</label>
+      <input type="number" id="SHB" name="SHB" placeholder="2.086434938e-4" step="any"><br>
+      <label for="SHC">Steinhart-Hart C:</label>
+      <input type="number" id="SHC" name="SHC" placeholder="1.597510723e-7" step="any">
+    </fieldset>
+
+    <fieldset>
+      <legend>Brew</legend>
+      <label for="BloomTime">Bloom phase time (s):</label>
+      <input type="number" id="BloomTime" name="BloomTime" placeholder="0" step="1" min="0" max="100"><br>
+      <label for="BoilTemp">Boiling point temp:</label>
+      <input type="number" id="BoilTemp" name="BoilTemp" placeholder="0" step="0.01" min="0" max="110"><br>
+      <label for="BloomOffset">Bloom offset temp:</label>
+      <input type="number" id="BloomOffset" name="BloomOffset" placeholder="0" step="1" min="-15" max="15">
+    </fieldset>
+
+    <fieldset>
+      <legend>Display</legend>
+      <!-- An unchecked checkbox is not submitted, so each one drives a hidden
+           0/1 field. The hidden fields stay disabled (not sent) until the
+           device's values have loaded. -->
+      <input type="hidden" id="Fahrenheit" name="Fahrenheit" disabled>
+      <input type="checkbox" id="FahrenheitBox" data-target="Fahrenheit">
+      <label for="FahrenheitBox">Show temperatures in Fahrenheit (&deg;F)</label><br>
+      <input type="hidden" id="Decimals" name="Decimals" disabled>
+      <input type="checkbox" id="DecimalsBox" data-target="Decimals">
+      <label for="DecimalsBox">Show decimals</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Screen Theme Color</legend>
+      <!-- Submitted value. Disabled (so not sent) until the device's colour has
+           loaded, so a failed load can never overwrite it. -->
+      <input type="hidden" id="ButtonColor" name="ButtonColor" value="#eb9039" disabled>
+      <div class="color-editor">
+        <div id="colorPicker"></div>
+        <div class="color-fields">
+          <label for="colorHex">Hex:</label>
+          <input type="text" id="colorHex" pattern="#?[0-9a-fA-F]{6}" maxlength="7"><br>
+          <label for="colorR">R:</label>
+          <input type="number" id="colorR" min="0" max="255">
+          <label for="colorG">G:</label>
+          <input type="number" id="colorG" min="0" max="255">
+          <label for="colorB">B:</label>
+          <input type="number" id="colorB" min="0" max="255">
+          <div class="swatches">
+            <button type="button" class="swatch" data-color="#eb9039" title="Orange" style="background:#eb9039"></button>
+            <button type="button" class="swatch" data-color="#388e3c" title="Green" style="background:#388e3c"></button>
+            <button type="button" class="swatch" data-color="#4040ff" title="Blue" style="background:#4040ff"></button>
+            <button type="button" class="swatch" data-color="#d32f2f" title="Red" style="background:#d32f2f"></button>
+            <button type="button" class="swatch" data-color="#7b1fa2" title="Purple" style="background:#7b1fa2"></button>
+            <button type="button" class="swatch" data-color="#607d8b" title="Grey" style="background:#607d8b"></button>
+          </div>
+          <div class="preview" id="colorPreview"> PREVIEW </div>
+        </div>
+      </div>
+    </fieldset>
+
+    <br>
+    <input type="submit" value="Save settings">
+    <span id="saveStatus" role="status"></span>
+  </form>
+
+  <script>
+    // Fetch all settings as JSON ({inputId: value}) and fill the matching inputs.
+    function loadSettings() {
+      fetch("/settingsInfo")
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function (values) {
+          Object.keys(values).forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.value = values[id] === null ? "" : values[id];
+          });
+          syncCheckboxesFromValues();
+          if (values.ButtonColor) {
+            setColor(values.ButtonColor);
+            colorInput.disabled = false;
+          }
+        })
+        .catch(console.error);
+    }
+
+    // ---- Button colour editor: wheel + sliders, hex, RGB and presets kept in sync.
+    var colorInput = document.getElementById("ButtonColor");
+    var hexField = document.getElementById("colorHex");
+    var rgbFields = ["colorR", "colorG", "colorB"].map(function (id) { return document.getElementById(id); });
+
+    // iro.js comes from a CDN; without it the hex/RGB fields still work.
+    var picker = window.iro ? new iro.ColorPicker("#colorPicker", {
+      width: 200,
+      color: colorInput.value,
+      layout: [
+        { component: iro.ui.Wheel },
+        { component: iro.ui.Slider, options: { sliderType: "saturation" } },
+        { component: iro.ui.Slider, options: { sliderType: "value" } }
+      ]
+    }) : null;
+
+    function toHex(r, g, b) {
+      return "#" + [r, g, b].map(function (v) { return ("0" + v.toString(16)).slice(-2); }).join("");
+    }
+
+    // Updates every view of the colour except the one that triggered it.
+    function setColor(hex, source) {
+      hex = hex.toLowerCase();
+      colorInput.value = hex;
+      if (source !== "hex") hexField.value = hex;
+      if (source !== "rgb") {
+        var n = parseInt(hex.slice(1), 16);
+        rgbFields[0].value = (n >> 16) & 255;
+        rgbFields[1].value = (n >> 8) & 255;
+        rgbFields[2].value = n & 255;
+      }
+      if (picker && source !== "picker") picker.color.hexString = hex;
+      document.getElementById("colorPreview").style.background = hex;
+    }
+
+    if (picker) picker.on("color:change", function (c) { setColor(c.hexString, "picker"); });
+
+    hexField.addEventListener("input", function () {
+      var v = hexField.value.trim();
+      if (v[0] !== "#") v = "#" + v;
+      if (/^#[0-9a-fA-F]{6}$/.test(v)) setColor(v, "hex");
+    });
+
+    rgbFields.forEach(function (field) {
+      field.addEventListener("input", function () {
+        var c = rgbFields.map(function (f) { return Math.min(255, Math.max(0, parseInt(f.value, 10) || 0)); });
+        setColor(toHex(c[0], c[1], c[2]), "rgb");
+      });
+    });
+
+    document.querySelectorAll(".swatch").forEach(function (sw) {
+      sw.addEventListener("click", function () { setColor(sw.dataset.color); });
+    });
+
+    setColor(colorInput.value);
+
+    loadSettings();
+
+    // ---- Checkboxes backed by hidden 0/1 fields (see the Display fieldset).
+    var checkboxes = document.querySelectorAll("input[type=checkbox][data-target]");
+    function syncCheckboxesFromValues() {
+      checkboxes.forEach(function (box) {
+        var hidden = document.getElementById(box.dataset.target);
+        if (hidden.value === "") return;
+        box.checked = hidden.value === "1";
+        hidden.disabled = false;
+      });
+    }
+    checkboxes.forEach(function (box) {
+      box.addEventListener("change", function () {
+        document.getElementById(box.dataset.target).value = box.checked ? "1" : "0";
+      });
+    });
+
+    // Save in the background instead of navigating to /set?... so the URL
+    // stays clean. Disabled and empty fields (e.g. an untouched MQTT broker
+    // URL) are not sent, matching what a normal form submit would do.
+    document.getElementById("settings").addEventListener("submit", function (event) {
+      event.preventDefault();
+      var params = new URLSearchParams();
+      this.querySelectorAll("[name]").forEach(function (el) {
+        if (!el.disabled && el.value !== "") params.append(el.name, el.value);
+      });
+
+      var status = document.getElementById("saveStatus");
+      status.textContent = "Saving...";
+      fetch("/set?" + params.toString())
+        .then(function (r) {
+          if (!r.ok) throw r.status;
+          status.textContent = "Saved";
+          // Show the values the device actually stored; screen settings are
+          // applied on the device's next 200 ms UI cycle, so wait a bit.
+          setTimeout(loadSettings, 400);
+        })
+        .catch(function (err) {
+          console.error(err);
+          status.textContent = "Save failed";
+        });
+    });
+  </script>
 </body>
-<script>
-  function fillPIDData(){
-    //document.getElementById('PVal').placeholder=1000
-    var xhttp = new XMLHttpRequest();
-    console.log("script init");
-    xhttp.onload = function() {
-    if (this.status == 200) {
-      var response = this.responseText;
-      console.log(response);
-          var p = parseFloat(response.split("_")[0]);
-          var i = parseFloat(response.split("_")[1]);
-          var d = parseFloat(response.split("_")[2]);
-          console.log(p);
-          console.log(i);
-          console.log(d);
-          document.getElementById('PVal').defaultValue  =p
-          document.getElementById('IVal').defaultValue  =i
-          document.getElementById('DVal').defaultValue  =d
-    }
-  };
-  xhttp.open("GET", "/pidInfo", true);
-  xhttp.send();
-  }
-  function fillResistorData(){
-    //document.getElementById('PVal').placeholder=1000
-    var xhttp = new XMLHttpRequest();
-    console.log("script init");
-    xhttp.onload = function() {
-    if (this.status == 200) {
-      var response = this.responseText;
-      console.log(response);
-          var r = parseFloat(response.split("_")[0]);
-          var n = parseFloat(response.split("_")[1]);
-          var b = parseFloat(response.split("_")[2]);
-          console.log(r);
-          console.log(n);
-          console.log(b);
-          document.getElementById('RVal').defaultValue  =r
-          document.getElementById('NVal').defaultValue  =n
-          document.getElementById('BVal').defaultValue  =b
-    }
-  };
-  xhttp.open("GET", "/resistorInfo", true);
-  xhttp.send();
-  }
-  function fillBrewData(){
-    //document.getElementById('PVal').placeholder=1000
-    var xhttp = new XMLHttpRequest();
-    console.log("script init");
-    xhttp.onload = function() {
-    if (this.status == 200) {
-      var response = this.responseText;
-      console.log(response);
-          var bloomtime = parseFloat(response.split("_")[0]);
-          var boiltemp = parseFloat(response.split("_")[1]);
-          var bloomoffset = parseFloat(response.split("_")[2]);
-          console.log(bloomtime);
-          console.log(boiltemp);
-          console.log(bloomoffset);
-          document.getElementById('BloomTime').defaultValue  =bloomtime
-          document.getElementById('BoilTemp').defaultValue  =boiltemp
-          document.getElementById('BloomOffset').defaultValue  =bloomoffset
-    }
-  };
-  xhttp.open("GET", "/boilInfo", true);
-  xhttp.send();
-  }
-  fillPIDData();
-  fillResistorData();
-  fillBrewData();
-</script>
 </html>
