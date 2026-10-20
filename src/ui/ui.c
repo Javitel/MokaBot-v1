@@ -4,6 +4,7 @@
 // Project name: MokaBot
 
 #include "ui.h"
+#include "devices/beep.hpp"
 #include "ui_helpers.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -171,30 +172,51 @@ void ui_event_ButtonIP(lv_event_t * e)
     
 }
 
+// Input device feedback: called by LVGL on every press of the touch screen.
+// On buttons: single beep for a click, double beep for a long press
+// (no-op on boards without audio).
+void ui_input_feedback(lv_indev_drv_t * drv, uint8_t code)
+{
+    if(code != LV_EVENT_SHORT_CLICKED && code != LV_EVENT_LONG_PRESSED) return;
+    lv_obj_t * obj = lv_indev_get_obj_act();
+    if(obj == NULL || !lv_obj_check_type(obj, &lv_btn_class)) return;
+    if(code == LV_EVENT_LONG_PRESSED) beepDouble();
+    else beep();
+}
+
 ///////////////////// SCREENS ////////////////////
 
-void ui_init(void)
+// Theme and shared mutex, set up once by whichever screen is shown first.
+static void ui_theme_init(void)
 {
+    static bool done = false;
+    if(done) return;
+    done = true;
     xSemaphore = xSemaphoreCreateMutex();
     lv_disp_t * dispp = lv_disp_get_default();
     lv_theme_t * theme = lv_theme_default_init(dispp, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED),
                                                true, LV_FONT_DEFAULT);
     lv_disp_set_theme(dispp, theme);
+}
+
+// Builds and shows the main screen, deleting the boot screen if it was shown.
+void ui_init(void)
+{
+    ui_theme_init();
     ui_load_preferences();
     ui_Screen1_screen_init();
     ui____initial_actions0 = lv_obj_create(NULL);
-    lv_disp_load_scr(ui_Screen1);
+    // auto_del frees the previous screen (the boot logo) once replaced.
+    lv_scr_load_anim(ui_Screen1, LV_SCR_LOAD_ANIM_NONE, 0, 0, true);
+    ui_ScreenBoot = NULL;
+    ui_SplashImage = NULL;
 }
 
+// Shows the boot screen with the logo.
 void ui_initBoot(void)
 {
-    xSemaphore = xSemaphoreCreateMutex();
-    lv_disp_t * dispp = lv_disp_get_default();
-    lv_theme_t * theme = lv_theme_default_init(dispp, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED),
-                                               true, LV_FONT_DEFAULT);
-    lv_disp_set_theme(dispp, theme);
+    ui_theme_init();
     ui_ScreenBoot_screen_init();
-    ui____initial_actions0 = lv_obj_create(NULL);
     lv_disp_load_scr(ui_ScreenBoot);
 }
 
@@ -235,6 +257,7 @@ void setProWeigth(const char * text){
 // }
 
 void showSplashScreen(int activate){
+    if(ui_SplashImage == NULL) return; // boot screen already deleted
     if(activate == 1){
         lv_obj_clear_flag(ui_SplashImage, LV_OBJ_FLAG_HIDDEN);
         lv_obj_move_foreground(ui_SplashImage);

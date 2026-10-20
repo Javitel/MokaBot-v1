@@ -2,9 +2,9 @@
 #include <Adafruit_BMP280.h>
 #include <Preferences.h>
 #include "logic/moka.hpp"
+#include "devices/boardPins.hpp"
+#include <Wire.h>
 
-#define BMP_SDA 21
-#define BMP_SCL 22
 #define BMP280_ADDRESS (0x76)
 Adafruit_BMP280 bmp;
 
@@ -23,6 +23,9 @@ void initSensor(){
   setTargetBoilingTemp(preferences.getFloat("boilingTemp", getTargetBoilingTemp()));
   setTargetHeatingTemp(preferences.getFloat("heatingTemp", getTargetHeatingTemp()));
   preferences.end();
+  // Shared with the ADS1115 (started later in init()). On boards whose
+  // display driver already started Wire on these pins, this is a no-op.
+  Wire.begin(PIN_SENSOR_SDA, PIN_SENSOR_SCL);
   bmp.begin(BMP280_ADDRESS);
   bmp.setSampling(Adafruit_BMP280::MODE_NORMAL,     /* Operating Mode. */
                   Adafruit_BMP280::SAMPLING_X16,     /* Temp. oversampling */

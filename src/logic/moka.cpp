@@ -7,10 +7,11 @@
 #include <Preferences.h>
 #include <time.h>
 #include "logic/pressureSensor.hpp"
+#include "devices/boardPins.hpp"
 
 const int RelayActivationValue = HIGH;
 //const int pinDataDQ = 33;
-const int pinHeater = 32;
+const int pinHeater = PIN_HEATER;
 //const int pinNTC = 27;
 
 boolean running = false;

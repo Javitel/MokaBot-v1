@@ -1,5 +1,6 @@
 #include "webserver.hpp"
 #include "WebServer.h"
+#include <WiFi.h>
 #include <WiFiProvisioner.h>
 #include "SPIFFS.h"
 #include <ESPmDNS.h>

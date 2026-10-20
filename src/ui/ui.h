@@ -67,6 +67,8 @@ extern lv_obj_t * ui____initial_actions0;
 
 // UI INIT
 void ui_init(void);
+// Register as the touch input driver's feedback_cb to beep on button presses.
+void ui_input_feedback(lv_indev_drv_t * drv, uint8_t code);
 void ui_initBoot(void);
 void ui_load_preferences(void);
 bool ui_show_decimals(void);
