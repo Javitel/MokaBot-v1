@@ -5,6 +5,9 @@
 
 #include "ui.h"
 #include "devices/beep.hpp"
+#include "logic/webserver.hpp"
+#include "logic/pressureSensor.hpp"
+#include "logic/moka.hpp"
 #include "ui_helpers.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -71,84 +74,119 @@ lv_obj_t * ui____initial_actions0;
 ///////////////////// ANIMATIONS ////////////////////
 
 ///////////////////// FUNCTIONS ////////////////////
+// ---- Press handling ---------------------------------------------------------
+// The touch controller can report a brief release while a finger is held,
+// which made LVGL fire a short click before (or right after) a long press.
+// - Short presses of buttons that also have a long press are deferred by
+//   SHORT_PRESS_DEFER_MS and dropped if the same button is pressed again
+//   within that window (the press resumed: the new press decides).
+// - Short presses are ignored for SHORT_PRESS_LOCKOUT_MS after a long press.
+// Beeps are played here (not from an LVGL hook) so a dropped short press is
+// silent.
+#define SHORT_PRESS_DEFER_MS   250
+#define SHORT_PRESS_LOCKOUT_MS 500
+
+static bool longPressSeen = false;
+static uint32_t lastLongPressTick = 0;
+static lv_timer_t * pendingShortTimer = NULL;
+static lv_obj_t * pendingShortObj = NULL;
+static void (*pendingShortAction)(void) = NULL;
+
+void ui_note_long_press(void)
+{
+    longPressSeen = true;
+    lastLongPressTick = lv_tick_get();
+    beepDouble();
+}
+
+
+// Deferred short-press actions (the ui_events functions ignore their event).
+static void short_switch_off(void) { mokaSwitchOff(NULL); }
+static void short_preheat(void)    { preheatingOn(NULL); }
+static void short_boil(void)       { boilingOn(NULL); }
+// EXTRACT on the power page: relay at the page's percentage, no PID.
+static void short_manual_power(void) { manualPowerOn(ui_get_power_percent()); }
+static void short_wifi_toggle(void)
+{
+    // While the provisioning portal runs, a tap cancels it.
+    if(isProvisioning()) {
+        stopProvisioning();
+    }
+    else if(xSemaphoreTake(xSemaphore, (TickType_t) 50) == pdTRUE) {
+        setMokaWifiStatus(1);
+        xSemaphoreGive(xSemaphore);
+    }
+}
+
 void ui_event_Button1(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
     if(event_code == LV_EVENT_LONG_PRESSED) {
-        //decreaseTargetTemp(e);
-        //if(  xSemaphoreTake( xSemaphore, ( TickType_t ) 50 ) == pdTRUE ){ 
         saveTargetTemp(e);
-        //xSemaphoreGive( xSemaphore );
-        //}
     }
-    else{
-        if(event_code == LV_EVENT_SHORT_CLICKED) {
-            mokaSwitchOff(e);
-        }
+    else if(event_code == LV_EVENT_SHORT_CLICKED ) {
+        short_switch_off();
     }
-    
-    
 }
 
 void ui_event_Button2(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
     if(event_code == LV_EVENT_LONG_PRESSED) {
-        //decreaseTargetTemp(e);
-        //if(  xSemaphoreTake( xSemaphore, ( TickType_t ) 50 ) == pdTRUE ){ 
         calibrateBoiling();
-        //xSemaphoreGive( xSemaphore );
-        //}
     }
-    else{
-        if(event_code == LV_EVENT_SHORT_CLICKED) {
-            preheatingOn(e);
-        }
+    else if(event_code == LV_EVENT_SHORT_CLICKED) {
+        short_preheat();
     }
 }
-    
 
 void ui_event_Button3(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
-    if(event_code == LV_EVENT_SHORT_CLICKED) {
+    if(event_code == LV_EVENT_LONG_PRESSED) {
+        ui_note_long_press();
+        if(ui_power_page()) {
+            // Hold EXTRACT on the power page: save the percentage.
+            ui_save_power_percent();
+        }
+        else {
+            manualBloomPhase(e);
             boilingOn(e);
         }
-    if(event_code == LV_EVENT_LONG_PRESSED) {
-        //decreaseTargetTemp(e);
-        //if(  xSemaphoreTake( xSemaphore, ( TickType_t ) 50 ) == pdTRUE ){ 
-        manualBloomPhase(e);
-        boilingOn(e);
-        //xSemaphoreGive( xSemaphore );
-        //}
     }
-    
+    else if(event_code == LV_EVENT_SHORT_CLICKED) {
+        if(ui_power_page()){
+            short_manual_power();
+        }else{
+            short_boil();
+        }
+
+    }
 }
 
-
+// + and - have no long press: act immediately on every short click.
 void ui_event_Button4(lv_event_t * e)
 {
-    lv_event_code_t event_code = lv_event_get_code(e);
-
-    if(event_code == LV_EVENT_SHORT_CLICKED) {
-        //if( xSemaphoreTake( xSemaphore, ( TickType_t ) 50 ) == pdTRUE ){ 
-            increaseTargetTemp(e);
-            //delay(100);
-            //xSemaphoreGive( xSemaphore );
-        //}
-        
+    if(lv_event_get_code(e) == LV_EVENT_SHORT_CLICKED) {
+        beep();
+        if(ui_power_page()) {
+            ui_adjust_power_percent(1);
+            // Running in manual power: apply the new percentage right away.
+            if(getMokaStatus() == 3) setManualPower(ui_get_power_percent());
+        }
+        else increaseTargetTemp(e);
     }
 }
 
 void ui_event_Button5(lv_event_t * e)
 {
-    lv_event_code_t event_code = lv_event_get_code(e);
-
-    if(event_code == LV_EVENT_SHORT_CLICKED) {
-        //if( xSemaphoreTake( xSemaphore, ( TickType_t ) 50 ) == pdTRUE ){ 
-            decreaseTargetTemp(e);
-            //xSemaphoreGive( xSemaphore );
-        //}
+    if(lv_event_get_code(e) == LV_EVENT_SHORT_CLICKED) {
+        beep();
+        if(ui_power_page()) {
+            ui_adjust_power_percent(-1);
+            if(getMokaStatus() == 3) setManualPower(ui_get_power_percent());
+        }
+        else decreaseTargetTemp(e);
     }
 }
 
@@ -156,32 +194,15 @@ void ui_event_ButtonIP(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
     if(event_code == LV_EVENT_LONG_PRESSED) {
-        if(  xSemaphoreTake( xSemaphore, ( TickType_t ) 50 ) == pdTRUE ){ 
+        ui_note_long_press();
+        if(xSemaphoreTake(xSemaphore, (TickType_t) 50) == pdTRUE) {
             setMokaWifiStatus(-1);
-            xSemaphoreGive( xSemaphore );
+            xSemaphoreGive(xSemaphore);
         }
     }
-    else{
-        if(event_code == LV_EVENT_SHORT_CLICKED) {
-            if(  xSemaphoreTake( xSemaphore, ( TickType_t ) 50 ) == pdTRUE ){ 
-                setMokaWifiStatus(1);
-            xSemaphoreGive( xSemaphore );
-        }
-        }
+    else if(event_code == LV_EVENT_SHORT_CLICKED) {
+        short_wifi_toggle();
     }
-    
-}
-
-// Input device feedback: called by LVGL on every press of the touch screen.
-// On buttons: single beep for a click, double beep for a long press
-// (no-op on boards without audio).
-void ui_input_feedback(lv_indev_drv_t * drv, uint8_t code)
-{
-    if(code != LV_EVENT_SHORT_CLICKED && code != LV_EVENT_LONG_PRESSED) return;
-    lv_obj_t * obj = lv_indev_get_obj_act();
-    if(obj == NULL || !lv_obj_check_type(obj, &lv_btn_class)) return;
-    if(code == LV_EVENT_LONG_PRESSED) beepDouble();
-    else beep();
 }
 
 ///////////////////// SCREENS ////////////////////
@@ -246,15 +267,6 @@ void setProTemp(const char * text){
 void setProWeigth(const char * text){
     lv_label_set_text(ui_ProWeigth, text);
 }
-
-// void showScaleButton(int activate){
-//     if(activate == 1){
-//         lv_obj_clear_flag(ui_ButtonScale, LV_OBJ_FLAG_HIDDEN);
-//     }
-//     else{
-//         lv_obj_add_flag(ui_ButtonScale, LV_OBJ_FLAG_HIDDEN);
-//     }
-// }
 
 void showSplashScreen(int activate){
     if(ui_SplashImage == NULL) return; // boot screen already deleted

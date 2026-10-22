@@ -44,37 +44,26 @@ void manualBloomPhase(lv_event_t * e)
 	setManualBloomTime(300.0);
 }
 
+// Adjusts the target of the current mode (heating or boiling) by delta C.
+static void adjustTargetTemp(float delta)
+{
+	int status = getMokaStatus();
+	if(status == 1){
+		setTargetHeatingTemp(getTargetHeatingTemp() + delta);
+	}
+	else if(status == 2){
+		setTargetBoilingTemp(getTargetBoilingTemp() + delta);
+	}
+}
+
 void decreaseTargetTemp(lv_event_t * e)
 {
-	float aux=0;
-	if(getMokaStatus() == 1){
-		aux = getTargetHeatingTemp();
-		aux = aux -1.0 ;
-		setTargetHeatingTemp(aux);
-	}
-	if(getMokaStatus() == 2){
-		aux = getTargetBoilingTemp();
-		aux = aux -1.0 ;
-		setTargetBoilingTemp(aux);
-	}
-	//lv_timer_handler();
+	adjustTargetTemp(-1.0f);
 }
 
 void increaseTargetTemp(lv_event_t * e)
 {
-	
-float aux=0;
-	if(getMokaStatus() == 1){
-		aux = getTargetHeatingTemp();
-		aux = aux +1.0 ;
-		setTargetHeatingTemp(aux);
-	}
-	if(getMokaStatus() == 2){
-		aux = getTargetBoilingTemp();
-		aux = aux +1.0 ;
-		setTargetBoilingTemp(aux);
-	}
-	//lv_timer_handler();
+	adjustTargetTemp(1.0f);
 }
 
 void saveTargetTemp(lv_event_t * e){

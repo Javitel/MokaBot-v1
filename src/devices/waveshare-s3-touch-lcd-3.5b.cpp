@@ -8,6 +8,7 @@
 #include "es8311.h"
 #include "waveshare-s3-touch-lcd-3.5b.hpp"
 #include "beep.hpp"
+#include "taskCores.hpp"
 
 // Pins and addresses from Waveshare's ESP32-S3-Touch-LCD-3.5B examples.
 
@@ -103,9 +104,10 @@ static void resetPanel() {
 
 // Last touch state reported by the controller, in native panel coordinates
 // (320x480 portrait).
-static bool touchPressed = false;
-static uint16_t touchX = 0;
-static uint16_t touchY = 0;
+// Written by the touch task, read by LVGL's read callback (other core).
+static volatile bool touchPressed = false;
+static volatile uint16_t touchX = 0;
+static volatile uint16_t touchY = 0;
 
 // Polls the touch controller and updates the state above. Like Waveshare's
 // driver, frames without valid data (which the AXS15231B also returns while a
@@ -139,23 +141,65 @@ static void pollTouch() {
   touchPressed = true;
 }
 
+// Touch is polled by its own task (touchTaskLoop, pinned to CORE_I2C with the
+// other I2C users) instead of LVGL's read callback, which runs in the UI task
+// on the other core. The task records every press/release transition in
+// touchQueue and LVGL drains it, so a tap that starts and ends while LVGL is
+// busy drawing is still delivered.
+#define TOUCH_POLL_MS        75
+#define TOUCH_QUEUE_LENGTH   16
+#define TOUCH_TASK_PRIORITY  8   // above the sensor tasks: short and periodic
+
+typedef struct {
+  bool pressed;
+  uint16_t x;  // native panel coordinates (320x480 portrait)
+  uint16_t y;
+} TouchEvent;
+
+static QueueHandle_t touchQueue = NULL;
+
+// Polls every TOUCH_POLL_MS and queues each press/release transition.
+static void touchTaskLoop(void *param) {
+  bool lastQueued = false;
+  TickType_t xLastWakeTime = xTaskGetTickCount();
+  while (true) {
+    pollTouch();
+    if (touchPressed != lastQueued) {
+      TouchEvent event = { touchPressed, touchX, touchY };
+      // Never block the poller; if LVGL falls 16 transitions behind, drop.
+      if (xQueueSend(touchQueue, &event, 0) == pdTRUE) lastQueued = touchPressed;
+    }
+    xTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(TOUCH_POLL_MS));
+  }
+}
+
 /*Read the touchpad*/
 static void my_touch_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
-  pollTouch();
-  if (!touchPressed) {
-    data->state = LV_INDEV_STATE_REL;
-    return;
+  // State last handed to LVGL; persists between calls.
+  static TouchEvent current = { false, 0, 0 };
+
+  TouchEvent event;
+  if (xQueueReceive(touchQueue, &event, 0) == pdTRUE) {
+    current = event;
   }
-  data->state = LV_INDEV_STATE_PR;
-  uint16_t rawX = touchX;
-  uint16_t rawY = touchY;
-  // Map native portrait coordinates to the rotated (landscape) screen.
+  else if (current.pressed && touchPressed) {
+    // No transition pending: follow the finger while it is held.
+    current.x = touchX;
+    current.y = touchY;
+  }
+  // More transitions queued (e.g. a whole tap since the last read): have LVGL
+  // call again right away so the press and the release are both processed.
+  data->continue_reading = uxQueueMessagesWaiting(touchQueue) > 0;
+
+  data->state = current.pressed ? LV_INDEV_STATE_PR : LV_INDEV_STATE_REL;
+  // Map native portrait coordinates to the rotated (landscape) screen. The
+  // release keeps the last pressed position, as LVGL expects.
 #if DISPLAY_ROTATION == 1
-  data->point.x = rawY;
-  data->point.y = (LCD_WIDTH - 1) - rawX;
+  data->point.x = current.y;
+  data->point.y = (LCD_WIDTH - 1) - current.x;
 #else
-  data->point.x = (LCD_HEIGHT - 1) - rawY;
-  data->point.y = rawX;
+  data->point.x = (LCD_HEIGHT - 1) - current.y;
+  data->point.y = current.x;
 #endif
 
   #if DEBUG_TOUCH !=0
@@ -197,6 +241,9 @@ void displayInit(){
   indev_drv.type = LV_INDEV_TYPE_POINTER;
   indev_drv.read_cb = my_touch_read;
   lv_indev_drv_register(&indev_drv);
+
+  touchQueue = xQueueCreate(TOUCH_QUEUE_LENGTH, sizeof(TouchEvent));
+  xTaskCreatePinnedToCore(touchTaskLoop, "touch", 3072, NULL, TOUCH_TASK_PRIORITY, NULL, CORE_I2C);
 }
 
 // ---- Key-press beep -------------------------------------------------------

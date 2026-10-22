@@ -55,7 +55,6 @@ extern lv_obj_t * ui_CurrentPressure;
 extern lv_obj_t * ui_ExtraInfo;
 void ui_event_ButtonIP(lv_event_t * e);
 extern lv_obj_t * ui_ButtonIP;
-//extern lv_obj_t * ui_ButtonScale;
 extern lv_obj_t * ui_CurrentIPLabel;
 extern lv_obj_t * ui_ProScaleLabel;
 
@@ -67,9 +66,13 @@ extern lv_obj_t * ui____initial_actions0;
 
 // UI INIT
 void ui_init(void);
-// Register as the touch input driver's feedback_cb to beep on button presses.
-void ui_input_feedback(lv_indev_drv_t * drv, uint8_t code);
 void ui_initBoot(void);
+// Power page (swipe left/right on the main screen): the target label shows a
+// 50-100% value that +/- adjust by 1.
+bool ui_power_page(void);
+int ui_get_power_percent(void);
+void ui_adjust_power_percent(int delta);
+void ui_save_power_percent(void);
 void ui_load_preferences(void);
 bool ui_show_decimals(void);
 bool ui_use_fahrenheit(void);

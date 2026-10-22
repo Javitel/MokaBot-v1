@@ -5,11 +5,13 @@
 
 #include "ui.h"
 #include "nvs.h"
+#include "devices/beep.hpp"
 
 #define UI_NVS_NAMESPACE "ui"
 #define UI_NVS_COLOR_KEY "btnColor"
 #define UI_NVS_DECIMALS_KEY "decimals"
 #define UI_NVS_FAHRENHEIT_KEY "fahrenheit"
+#define UI_NVS_POWER_KEY "powerPct"
 
 //orange
 uint32_t color = 0xeb9039; 
@@ -184,6 +186,12 @@ void ui_ScreenBoot_screen_init(void)
 
 static lv_obj_t * ui_ButtonColor;
 static lv_obj_t * ui_ColorPanel;
+// Full-screen layer behind the open colour panel: tapping outside the panel
+// closes it without saving.
+static lv_obj_t * ui_ColorBackdrop;
+// Colour when the panel was opened, restored when it is closed without saving
+// (the wheel/slider preview the colour live).
+static uint32_t colorBeforeEdit;
 static lv_obj_t * ui_ButtonUnits;
 static lv_obj_t * ui_LabelUnits;
 //Color Selector Objects
@@ -246,12 +254,16 @@ static void nvs_write_u32(const char * key, uint32_t value)
 }
 
 // Loads the saved UI preferences from NVS; keeps the defaults if none are stored.
+// Defined with the power page below.
+static void load_power_percent(void);
+
 void ui_load_preferences(void)
 {
     uint32_t saved;
     if(nvs_read_u32(UI_NVS_COLOR_KEY, &saved)) color = saved;
     if(nvs_read_u32(UI_NVS_DECIMALS_KEY, &saved)) showDecimals = saved != 0;
     if(nvs_read_u32(UI_NVS_FAHRENHEIT_KEY, &saved)) useFahrenheit = saved != 0;
+    load_power_percent();
 }
 
 bool ui_show_decimals(void)
@@ -264,15 +276,20 @@ bool ui_use_fahrenheit(void)
     return useFahrenheit;
 }
 
+static void toggle_units(void)
+{
+    useFahrenheit = !useFahrenheit;
+    lv_label_set_text(ui_LabelUnits, useFahrenheit ? "°F" : "°C");
+    nvs_write_u32(UI_NVS_FAHRENHEIT_KEY, useFahrenheit);
+}
+
 // Short click toggles Celsius/Fahrenheit, long press toggles decimals.
 // SHORT_CLICKED (not CLICKED) so a long press does not also switch units.
 static void units_button_event(lv_event_t * e)
 {
     lv_event_code_t code = lv_event_get_code(e);
     if(code == LV_EVENT_SHORT_CLICKED) {
-        useFahrenheit = !useFahrenheit;
-        lv_label_set_text(ui_LabelUnits, useFahrenheit ? "°F" : "°C");
-        nvs_write_u32(UI_NVS_FAHRENHEIT_KEY, useFahrenheit);
+        toggle_units();
     }
     else if(code == LV_EVENT_LONG_PRESSED) {
         showDecimals = !showDecimals;
@@ -336,15 +353,38 @@ static void pending_settings_timer(lv_timer_t * timer)
 static void color_close_event(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    beep();
     nvs_write_u32(UI_NVS_COLOR_KEY, color);
     lv_obj_set_style_bg_color(e->current_target, lv_color_hex(color), LV_STATE_DEFAULT);
     lv_obj_add_flag(ui_ColorPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui_ColorBackdrop, LV_OBJ_FLAG_HIDDEN);
+}
 
+// Tap outside the panel: discard the previewed colour and close.
+static void color_cancel_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    color = colorBeforeEdit;
+    apply_button_color(lv_color_hex(color));
+    lv_obj_add_flag(ui_ColorPanel, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(ui_ColorBackdrop, LV_OBJ_FLAG_HIDDEN);
 }
 
 // Builds the colour panel once, hidden; it is shown/hidden from then on.
 static void create_color_panel(void)
 {
+    // Created first so it sits below the panel; slightly dims the screen.
+    ui_ColorBackdrop = lv_obj_create(ui_Screen1);
+    lv_obj_set_size(ui_ColorBackdrop, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(ui_ColorBackdrop);
+    lv_obj_set_style_radius(ui_ColorBackdrop, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ui_ColorBackdrop, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(ui_ColorBackdrop, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ui_ColorBackdrop, LV_OPA_40, LV_PART_MAIN);
+    lv_obj_clear_flag(ui_ColorBackdrop, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ui_ColorBackdrop, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_event_cb(ui_ColorBackdrop, color_cancel_event, LV_EVENT_CLICKED, NULL);
+
     ui_ColorPanel = lv_obj_create(ui_Screen1);
     lv_obj_set_size(ui_ColorPanel, 260, 300);
     lv_obj_center(ui_ColorPanel);
@@ -382,11 +422,96 @@ static void create_color_panel(void)
 static void color_open_event(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    beep();
     // Sync the controls with the current colour, then show the panel on top.
     lv_colorwheel_set_rgb(ui_ColorWheel, lv_color_hex(color));
     lv_slider_set_value(ui_BrightnessSlider, lv_colorwheel_get_hsv(ui_ColorWheel).v, LV_ANIM_OFF);
+    colorBeforeEdit = color;
+    // Backdrop over the screen, panel over the backdrop.
+    lv_obj_move_foreground(ui_ColorBackdrop);
     lv_obj_move_foreground(ui_ColorPanel);
+    lv_obj_clear_flag(ui_ColorBackdrop, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(ui_ColorPanel, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ---- Power page ------------------------------------------------------------
+// Swiping left/right on the main screen slides to a second page that looks
+// the same, but the target label shows a power percentage (50-100%) that +/-
+// change. Instead of duplicating every widget, they are moved onto the other
+// screen object as it slides in, so all labels keep updating unchanged.
+#define POWER_PERCENT_MIN 50
+#define POWER_PERCENT_MAX 100
+#define PAGE_SLIDE_MS     300
+
+static lv_obj_t * ui_ScreenPower;
+static volatile bool powerPage = false;
+static volatile int powerPercent = POWER_PERCENT_MAX;
+
+bool ui_power_page(void)
+{
+    return powerPage;
+}
+
+int ui_get_power_percent(void)
+{
+    return powerPercent;
+}
+
+// Restores the saved percentage (kept within POWER_PERCENT_MIN..MAX).
+static void load_power_percent(void)
+{
+    uint32_t saved;
+    if(nvs_read_u32(UI_NVS_POWER_KEY, &saved) &&
+       saved >= POWER_PERCENT_MIN && saved <= POWER_PERCENT_MAX) {
+        powerPercent = (int)saved;
+    }
+}
+
+void ui_save_power_percent(void)
+{
+    nvs_write_u32(UI_NVS_POWER_KEY, (uint32_t)powerPercent);
+}
+
+void ui_adjust_power_percent(int delta)
+{
+    int value = powerPercent + delta;
+    if(value < POWER_PERCENT_MIN) value = POWER_PERCENT_MIN;
+    if(value > POWER_PERCENT_MAX) value = POWER_PERCENT_MAX;
+    powerPercent = value;
+}
+
+static void switch_page(lv_scr_load_anim_t anim)
+{
+    lv_obj_t * from = lv_scr_act();
+    lv_obj_t * to = (from == ui_Screen1) ? ui_ScreenPower : ui_Screen1;
+    // Moving child 0 each time keeps the original stacking order.
+    while(lv_obj_get_child_cnt(from) > 0) {
+        lv_obj_set_parent(lv_obj_get_child(from, 0), to);
+    }
+    powerPage = (to == ui_ScreenPower);
+    // Switching pages stops the moka, like pressing OFF, so a PID brew or a
+    // manual power run never continues on the other page.
+    mokaSwitchOff(NULL);
+    // No PREHEAT on the power page.
+    if(powerPage) lv_obj_add_flag(ui_Button2, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(ui_Button2, LV_OBJ_FLAG_HIDDEN);
+    lv_scr_load_anim(to, anim, PAGE_SLIDE_MS, 0, false);
+}
+
+static void screen_gesture_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_GESTURE) return;
+    // Ignore while a slide is running (the target screen is not active yet)
+    // and while the colour panel is open (its slider/wheel are dragged).
+    if(lv_event_get_current_target(e) != lv_scr_act()) return;
+    if(!lv_obj_has_flag(ui_ColorPanel, LV_OBJ_FLAG_HIDDEN)) return;
+
+    lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
+    if(dir == LV_DIR_LEFT) switch_page(LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    else if(dir == LV_DIR_RIGHT) switch_page(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+    else return;
+    // The swipe must not also count as a click on the button it started on.
+    lv_indev_wait_release(lv_indev_get_act());
 }
 
 void ui_Screen1_screen_init(void)
@@ -574,6 +699,12 @@ void ui_Screen1_screen_init(void)
     lv_obj_add_event_cb(ui_ButtonUnits, units_button_event, LV_EVENT_ALL, NULL);
 
     create_color_panel();
+
+    // Second page for the swipe (see switch_page); starts empty.
+    ui_ScreenPower = lv_obj_create(NULL);
+    lv_obj_clear_flag(ui_ScreenPower, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_event_cb(ui_Screen1, screen_gesture_event, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(ui_ScreenPower, screen_gesture_event, LV_EVENT_GESTURE, NULL);
     lv_timer_create(pending_settings_timer, 200, NULL);
 
     lv_obj_add_event_cb(ui_Button1, ui_event_Button1, LV_EVENT_ALL, NULL);

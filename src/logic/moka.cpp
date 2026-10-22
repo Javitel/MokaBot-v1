@@ -8,6 +8,7 @@
 #include <time.h>
 #include "logic/pressureSensor.hpp"
 #include "devices/boardPins.hpp"
+#include "taskCores.hpp"
 
 const int RelayActivationValue = HIGH;
 //const int pinDataDQ = 33;
@@ -81,18 +82,25 @@ int getrelayStatus(int status){
 }
 
   double averageADSRead(uint16_t id, int samples, double margin, double ref){
-    uint32_t average = 0;
-    uint32_t aux = 0;
+    // Signed: readings near 0 V can be slightly negative, which wrapped the
+    // old unsigned sum (e.g. "result average: 429496728").
+    int32_t average = 0;
+    int16_t aux = 0;
     ads.setMode(0);
     ads.requestADC(id);
     //ads.startADCReading(id, /*continuous=*/true);
     vTaskDelay( pdMS_TO_TICKS( 30));//delay(10);
     boolean retry =false;
+    int valid = 0;
     for (uint8_t i = 0; i < samples; i++) {
-      //aux = ads.readADC_SingleEnded(id);
-      aux = ads.getValue();//getLastConversionResults();
-      //Serial.println(aux);
-      //if(ads.conversionComplete()){
+      // Skip samples whose I2C read failed (the library reports it through
+      // getError(); the catch is only a last resort).
+      bool ok = false;
+      try{
+        aux = ads.getValue();
+        ok = ads.getError() == ADS1X15_OK;
+      } catch (...){}
+      if(ok){
         if((aux > ref + margin || aux < ref - margin) && ref > 0 && retry == false){
           i--;
           retry = true;
@@ -100,14 +108,17 @@ int getrelayStatus(int status){
         else{
           retry = false;
           average += aux;
+          valid++;
         }
+      }
 
-      
-      vTaskDelay( pdMS_TO_TICKS( 10));//delay(10);
+      vTaskDelay( pdMS_TO_TICKS( 15));//delay(10);
     }
+    // No valid sample: NAN, the caller skips this reading.
+    if(valid == 0) return NAN;
     Serial.print("result  average: ");
-    Serial.println(average/samples);
-    return average/samples;
+    Serial.println((double)average/valid);
+    return (double)average/valid;
   }
 
 void updateSensors(void *param){
@@ -118,7 +129,10 @@ const TickType_t xFrequency = pdMS_TO_TICKS(150);
 BaseType_t xWasDelayed;
   while(true){
       try{
-      refVoltage = ads.toVoltage(1)*ads.readADC(3);  ;//computeVolts(ads.readADC_SingleEnded(3));
+      int16_t raw = ads.readADC(3);
+      if(ads.getError() == ADS1X15_OK){
+        refVoltage = ads.toVoltage(1)*raw;
+      }
       updateTempNTC();
       } catch (...){}
     //vTaskDelay(pdMS_TO_TICKS(50));
@@ -130,7 +144,7 @@ void updateAmbientPressure(void *param){
 
     // Initialise the xLastWakeTime variable with the current time.
 TickType_t xLastWakeTime = xTaskGetTickCount();
-const TickType_t xFrequency = pdMS_TO_TICKS(1000);
+const TickType_t xFrequency = pdMS_TO_TICKS(2000);
 BaseType_t xWasDelayed;
   while(true){
         updateCurrentPressure();
@@ -192,6 +206,20 @@ MokaPreferences.end();
 myPID.setGains(p,i,d);
 }
 
+// Manual mode switches itself off this far above the boiling point.
+#define MANUAL_CUTOFF_ABOVE_BOILING 3.0
+
+// Boiling point (C) at the current ambient pressure; the calibrated boiling
+// temperature when no valid pressure reading is available yet.
+static float currentBoilingPoint(){
+  float pressure = getCurrentPressure();
+  if(pressure > 0) return getBoilingTemp(pressure / 100000);
+  return getCalibratedTemp();
+}
+
+// Defined with the other manual power functions below.
+static void manualPowerUpdate();
+
 void process(void *param){
  // TickType_t startTime = xTaskGetTickCount();
   TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -203,6 +231,21 @@ BaseType_t xWasDelayed;
      if(current <= -127.0 || mokaStatus == 0){
       connected=false;
       digitalWrite(pinHeater,getrelayStatus(LOW));
+      // Manual power has no temperature control: losing the sensor stops it
+      // for good instead of resuming when the reading comes back.
+      if(mokaStatus == 3) setMokaStatus(0);
+    }
+    else if(mokaStatus == 3){
+      // Manual power: fixed duty cycle, no PID, until the boiling point
+      // (at the current pressure) + MANUAL_CUTOFF_ABOVE_BOILING is reached.
+      connected=true;
+      if(current >= currentBoilingPoint() + MANUAL_CUTOFF_ABOVE_BOILING){
+        digitalWrite(pinHeater,getrelayStatus(LOW));
+        setMokaStatus(0);
+      }
+      else{
+        manualPowerUpdate();
+      }
     }
     else{  
       connected=true;
@@ -235,7 +278,8 @@ BaseType_t xWasDelayed;
     // Start the brew/bloom timer task once the brew begins; it deletes itself
     // as soon as the status leaves 2.
     if(getMokaStatus() == 2 && brewstart == true && brewTimerTask == NULL){
-      xTaskCreatePinnedToCore(brewTimer, "brewTimer", 2048, NULL, 6, &brewTimerTask, 1);
+      // No I2C: runs on the UI core, away from the bus traffic.
+      xTaskCreatePinnedToCore(brewTimer, "brewTimer", 2048, NULL, 4, &brewTimerTask, CORE_UI);
     }
 xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
     //vTaskDelay( pdMS_TO_TICKS( 30 ));
@@ -250,7 +294,7 @@ xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
 void brewTimer(void *param){
   double aux;
   TickType_t xLastWakeTime = xTaskGetTickCount();
-  const TickType_t xFrequency = pdMS_TO_TICKS(50);
+  const TickType_t xFrequency = pdMS_TO_TICKS(100);
   while(getMokaStatus() == 2){
     aux = millis() - startTime + elapsedTime;
 
@@ -310,6 +354,47 @@ double getBrewTime(){
   return brewTime;
 }
 
+// Manual power mode (status 3): no PID, the relay is on for
+// manualPowerPercent of every time window.
+static volatile int manualPowerPercent = 100;
+
+void setManualPower(int percent){
+  if(percent < 0) percent = 0;
+  if(percent > 100) percent = 100;
+  manualPowerPercent = percent;
+}
+
+int getManualPower(){
+  return manualPowerPercent;
+}
+
+// True when the temperature reading is valid (not disconnected / -127).
+static bool temperatureValid(){
+  return !isnan(current) && current > -127.0;
+}
+
+// Refuses to start without a valid temperature reading.
+void manualPowerOn(int percent){
+  if(!temperatureValid()) return;
+  setManualPower(percent);
+  setMokaStatus(3);
+}
+
+// One time window in manual mode: heater on for manualPowerPercent of it.
+static void manualPowerUpdate(){
+  running = true;
+  double onTime = timeWindow * manualPowerPercent / 100.0;
+  if(onTime > 0){
+    digitalWrite(pinHeater,getrelayStatus(HIGH));
+    vTaskDelay( pdMS_TO_TICKS( onTime ));
+  }
+  digitalWrite(pinHeater,getrelayStatus(LOW));
+  if(timeWindow - onTime > 0){
+    vTaskDelay( pdMS_TO_TICKS( timeWindow - onTime ));
+  }
+  running = false;
+}
+
  void pidUpdate(){
    running = true;
    temperature=current;
@@ -323,8 +408,24 @@ double getBrewTime(){
    running = false;
  }
 
+// Consecutive failed NTC readings after which the sensor is treated as
+// disconnected (-127), which turns the heater off in process().
+#define NTC_MAX_FAILED_READS 5
+static int failedNtcReads = 0;
+
 void updateTempNTC(){
-  refVoltage = averageADSRead(3,5, 25, refVoltage);//ads.readADC_Differential_1_3();//
+  // Read both channels first; if either failed (NAN), keep the previous
+  // temperature instead of computing one from bad data.
+  double refRead = averageADSRead(3,5, 25, refVoltage);//ads.readADC_Differential_1_3();//
+  double ntcRead = averageADSRead(0,10, 100, ntcValue);//ads.readADC_Differential_0_3();//
+  if(isnan(refRead) || isnan(ntcRead)){
+    if(++failedNtcReads >= NTC_MAX_FAILED_READS){
+      current = -127.0f;
+    }
+    return;
+  }
+  failedNtcReads = 0;
+  refVoltage = refRead;
   //refVoltage= refVoltage * 0.1875/1000;  f
   refVoltage = ads.toVoltage(1)*refVoltage;
   double temp;
@@ -334,8 +435,16 @@ double resistance;
  double kelvin;
  double vm = 0.0;
  double aux = 0;
-  ntcValue = averageADSRead(0,12, 75, ntcValue);//ads.readADC_Differential_0_3();//  
-vm = ads.toVoltage(1)*ntcValue;
+vm = ads.toVoltage(1)*ntcRead;
+  // NTC divider open or shorted (0 V or at the reference): no temperature can
+  // be computed, report disconnected right away instead of NAN. ntcValue is
+  // reset so the outlier filter does not compare against this reading.
+  if(vm <= 0 || vm >= refVoltage){
+    ntcValue = 0;
+    current = -127.0f;
+    return;
+  }
+  ntcValue = ntcRead;
 resistance = (refVoltage - vm)*(resistorFixed/vm);
 aux = shA + (shB * log(resistance)) + (shC * pow(log(resistance), 3));
 kelvin =1.0/aux;
@@ -367,7 +476,7 @@ int getMokaStatus(){
 void setMokaStatus(int status){
   changePending = true;
   mokaStatus = status;
-  if(status == 1 || status == 0){
+  if(status == 1 || status == 0 || status == 3){
     brewstart = false;
     bloomfinished = false;
     bloomTime = 0;

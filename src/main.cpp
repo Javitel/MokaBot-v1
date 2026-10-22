@@ -20,6 +20,7 @@
 #include "logic/moka.hpp"
 #include "logic/pressureSensor.hpp"
 #include "logic/webserver.hpp"
+#include "taskCores.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -127,11 +128,24 @@ void calculateLabels(void *param){
       bloomText = (getBloomTime() == -1) ? String("OFF") : formatValue(getBloomTime(), "Bloom: ", "s");
       brewText = formatValue(getBrewTime(), "Brew: ", "s");
     }
+    else if(status == 3){
+      targetText = String(getManualPower()) + "%";
+      extraText = "ON";
+      bloomText="";
+      brewText="";
+    }
     else{
       targetText = "OFF";
       extraText="";
       bloomText="";
       brewText="";
+    }
+    // Power page (swiped to from the main screen): the target label shows the
+    // power percentage instead of the target temperature.
+    if(ui_power_page()){
+      targetText = String(ui_get_power_percent()) + "%";
+      // Info line shows whether manual power is running.
+      extraText = (status == 3) ? "ON" : "OFF";
     }
 
     // Apply only what changed.
@@ -152,8 +166,6 @@ void setup() {
   Serial.begin(115200);
   displayInit();
   beepInit();
-  // Beep on button presses (no-op on boards without audio).
-  lv_indev_get_next(NULL)->driver->feedback_cb = ui_input_feedback;
 
   // Boot logo. LVGL only draws inside lv_timer_handler()/lv_refr_now(), so it
   // is rendered explicitly here, before the UI task exists.
@@ -171,12 +183,17 @@ void setup() {
   }
   currentPressure = getCurrentPressure();
   lvglMutex = xSemaphoreCreateMutex();
-  xTaskCreatePinnedToCore(process, "process",2048, NULL, 7, &PIDTask,1);     
-  xTaskCreatePinnedToCore(webserverService, "webserver",4096, NULL, 3, &WebserviceTask,1);
-  xTaskCreatePinnedToCore(updateSensors, "sensors",4096, NULL, 8, &SensorTask,0);
-  xTaskCreatePinnedToCore(updateAmbientPressure, "pressure",2048, NULL, 4, &PressureTask,0);
-  xTaskCreatePinnedToCore(refreshUI, "UI",4096, NULL, 7, &UITask,0);
-  xTaskCreatePinnedToCore(calculateLabels, "labels",4096, NULL, 8, &LabelsTasks,1);
+  // I2C users (PID reads the BMP280, sensors, pressure) on CORE_I2C, with the
+  // touch task; LVGL drawing and label updates alone on CORE_UI.
+  xTaskCreatePinnedToCore(process, "process",2048, NULL, 5, &PIDTask, CORE_I2C);
+  xTaskCreatePinnedToCore(updateSensors, "sensors",4096, NULL, 5, &SensorTask, CORE_I2C);
+  // 4096: the BMP read path plus ESP-IDF's I2C error logging (printf)
+  // overflowed 2048 ("Stack canary watchpoint triggered (pressure)").
+  xTaskCreatePinnedToCore(updateAmbientPressure, "pressure",4096, NULL, 4, &PressureTask, CORE_I2C);
+  xTaskCreatePinnedToCore(refreshUI, "UI",4096, NULL, 7, &UITask, CORE_UI);
+  xTaskCreatePinnedToCore(calculateLabels, "labels",4096, NULL, 6, &LabelsTasks, CORE_UI);
+  // No I2C; next to the WiFi stack (core 0) at low priority.
+  xTaskCreatePinnedToCore(webserverService, "webserver",4096, NULL, 3, &WebserviceTask, CORE_I2C);
   ui_init();
   initCycle = true;
 

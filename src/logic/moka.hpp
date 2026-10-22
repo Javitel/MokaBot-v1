@@ -14,8 +14,13 @@ void updateTempNTC(void);
 void averageTemp();
 float getCurrentTemp();
 int getMokaStatus();
-//0 OFF, 1 HEAT, 2 BOIL
+//0 OFF, 1 HEAT, 2 BOIL, 3 MANUAL POWER
 void setMokaStatus(int status);
+// Manual power mode: relay on for `percent` (0-100) of each PID time window,
+// without the PID. manualPowerOn() also switches to status 3.
+void manualPowerOn(int percent);
+void setManualPower(int percent);
+int getManualPower();
 void brewMokaManual(double time);
 void setBloomTime(double overrideTime);
 void setBloomOffset(double overrideTime);

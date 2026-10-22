@@ -93,6 +93,36 @@ String retrieveSettings(){
   return json;
 }
 
+// ---- Cancelling provisioning ----------------------------------------------
+// WiFiProvisioner has no public abort: its blocking loop() only ends when the
+// private _serverLoopFlag is set, and then releases the portal (web server,
+// DNS, AP) itself. Explicit template instantiation is allowed to name private
+// members, which gives a pointer-to-member to that flag without patching the
+// library.
+template <typename Tag, typename Tag::type Member>
+struct PrivateMemberAccess {
+  friend typename Tag::type privateMember(Tag) { return Member; }
+};
+struct ProvisionerLoopFlag {
+  typedef bool WiFiProvisioner::*type;
+  friend type privateMember(ProvisionerLoopFlag);
+};
+template struct PrivateMemberAccess<ProvisionerLoopFlag, &WiFiProvisioner::_serverLoopFlag>;
+
+static volatile bool provisioning = false;
+static volatile bool provisioningCancelled = false;
+
+bool isProvisioning(){
+  return provisioning;
+}
+
+// Called from the UI: makes the provisioning loop exit and clean up.
+void stopProvisioning(){
+  if(!provisioning) return;
+  provisioningCancelled = true;
+  provisioner.*privateMember(ProvisionerLoopFlag()) = true;
+}
+
 void provisioningWifi(){
   
   provisioner.getConfig().SHOW_INPUT_FIELD = false; // No additional input field
@@ -112,8 +142,10 @@ void provisioningWifi(){
       }
     );
 
-  // Start provisioning
+  // Start provisioning (blocks until it connects or stopProvisioning() is called)
+    provisioning = true;
     provisioner.startProvisioning();
+    provisioning = false;
 }
 
 void webserverService(void *param){
@@ -161,11 +193,18 @@ int initNet() {
 
   bool connected = !(ssid.equals("") && pass.equals("")) && connectWiFi(ssid, pass);
   // The provisioning portal blocks until it connects; repeat only if it returns
-  // without a connection.
+  // without a connection, unless the user cancelled it.
+  provisioningCancelled = false;
   while(!connected){
     WiFi.disconnect();
     ip = "Provisioning...";
     provisioningWifi();
+    if(provisioningCancelled){
+      preferencesWS.end();
+      WiFi.disconnect();
+      ip = "Disconnected";
+      return -1;
+    }
     connected = WiFi.status() == WL_CONNECTED;
   }
   preferencesWS.end();

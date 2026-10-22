@@ -171,6 +171,9 @@ static void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t
 }
 
 /*Read the touchpad*/
+// How often LVGL reads the touch controller on this board.
+#define TOUCH_READ_PERIOD_MS 75
+
 static void my_touch_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
     uint16_t touchX, touchY;
     bool touched = tft.getTouch(&touchX, &touchY);
@@ -212,6 +215,8 @@ void displayInit(){
   indev_drv.type = LV_INDEV_TYPE_POINTER;
   indev_drv.read_cb = my_touch_read;
   lv_indev_drv_register(&indev_drv);
+  // Touch read period for this board only (LV_INDEV_DEF_READ_PERIOD is shared).
+  lv_timer_set_period(indev_drv.read_timer, TOUCH_READ_PERIOD_MS);
 }
 
 #endif // BOARD_WT32_SC01

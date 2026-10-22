@@ -1,5 +1,8 @@
 #pragma once
 
+// Timeout of each I2C transaction on the shared bus (Arduino default: 50 ms).
+#define I2C_TIMEOUT_MS  200
+
 // Moka hardware pins (heater relay, sensor I2C bus) per board, selected with
 // the BOARD_* build flag in platformio.ini. Display/touch pins live in the
 // board's driver file in this folder.
