@@ -518,6 +518,37 @@ static lv_obj_t * ui_OtaBackdrop;
 static lv_obj_t * ui_OtaPopup;
 static lv_obj_t * ui_OtaStatusLabel;
 static lv_obj_t * ui_OtaVersionLabel;
+static lv_obj_t * ui_OtaConfirmButton;
+static lv_obj_t * ui_OtaConfirmLabel;
+static lv_obj_t * ui_OtaCancelButton;
+
+static void ota_confirm_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    beep();
+    otaConfirm();
+}
+
+static void ota_cancel_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    beep();
+    otaCancel();
+}
+
+static lv_obj_t * create_ota_button(const char * text, lv_event_cb_t cb)
+{
+    lv_obj_t * button = lv_btn_create(ui_OtaPopup);
+    lv_obj_set_size(button, 110, 40);
+    lv_obj_set_style_bg_color(button, lv_color_hex(color), LV_STATE_DEFAULT);
+    lv_obj_add_event_cb(button, cb, LV_EVENT_CLICKED, NULL);
+    lv_obj_t * label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_center(label);
+    if(cb == ota_confirm_event) ui_OtaConfirmLabel = label;
+    return button;
+}
 static lv_obj_t * ui_OtaBar;
 
 static void create_ota_popup(void)
@@ -534,7 +565,7 @@ static void create_ota_popup(void)
     lv_obj_add_flag(ui_OtaBackdrop, LV_OBJ_FLAG_HIDDEN);
 
     ui_OtaPopup = lv_obj_create(ui_Screen1);
-    lv_obj_set_size(ui_OtaPopup, 300, 200);
+    lv_obj_set_size(ui_OtaPopup, 300, 250);
     lv_obj_center(ui_OtaPopup);
     lv_obj_clear_flag(ui_OtaPopup, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(ui_OtaPopup, LV_OBJ_FLAG_HIDDEN);
@@ -558,9 +589,17 @@ static void create_ota_popup(void)
 
     ui_OtaBar = lv_bar_create(ui_OtaPopup);
     lv_obj_set_size(ui_OtaBar, 240, 16);
-    lv_obj_align(ui_OtaBar, LV_ALIGN_BOTTOM_MID, 0, -5);
+    lv_obj_align(ui_OtaBar, LV_ALIGN_TOP_MID, 0, 125);
     lv_bar_set_range(ui_OtaBar, 0, 100);
     lv_obj_add_flag(ui_OtaBar, LV_OBJ_FLAG_HIDDEN);
+
+    // Update / Reinstall: only while an install waits for confirmation.
+    // Cancel: always.
+    ui_OtaConfirmButton = create_ota_button("Update", ota_confirm_event);
+    lv_obj_align(ui_OtaConfirmButton, LV_ALIGN_BOTTOM_LEFT, 0, 0);
+    lv_obj_add_flag(ui_OtaConfirmButton, LV_OBJ_FLAG_HIDDEN);
+    ui_OtaCancelButton = create_ota_button("Cancel", ota_cancel_event);
+    lv_obj_align(ui_OtaCancelButton, LV_ALIGN_BOTTOM_MID, 0, 0);
 }
 
 static void ota_popup_timer(lv_timer_t * timer)
@@ -603,6 +642,21 @@ static void ota_popup_timer(lv_timer_t * timer)
         strcpy(shownVersions, versions);
         lv_label_set_text(ui_OtaVersionLabel, shownVersions);
         lv_obj_align(ui_OtaVersionLabel, LV_ALIGN_TOP_MID, 0, 30);
+    }
+
+    // Update next to Cancel while waiting for confirmation, Cancel alone
+    // otherwise.
+    bool awaiting = otaAwaitingConfirm();
+    if(awaiting == lv_obj_has_flag(ui_OtaConfirmButton, LV_OBJ_FLAG_HIDDEN)) {
+        if(awaiting) {
+            lv_label_set_text(ui_OtaConfirmLabel, otaConfirmIsReinstall() ? "Reinstall" : "Update");
+            lv_obj_clear_flag(ui_OtaConfirmButton, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_align(ui_OtaCancelButton, LV_ALIGN_BOTTOM_RIGHT, 0, 0);
+        }
+        else {
+            lv_obj_add_flag(ui_OtaConfirmButton, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_align(ui_OtaCancelButton, LV_ALIGN_BOTTOM_MID, 0, 0);
+        }
     }
 
     int percent = otaProgress();

@@ -27,6 +27,16 @@ const char * otaStatusText(void);
 int otaProgress(void);
 // Version of the running firmware.
 const char * otaInstalledVersion(void);
+// True while an install waits for otaConfirm(): a newer version was found,
+// or the same version is offered as a reinstall (see otaConfirmIsReinstall).
+bool otaAwaitingConfirm(void);
+// True when the pending confirmation is a reinstall of the same version.
+bool otaConfirmIsReinstall(void);
+// Confirms installing the version found by the check.
+void otaConfirm(void);
+// Cancels at any stage: stops the check, declines the update, aborts the
+// download (the running firmware is kept) or closes the result.
+void otaCancel(void);
 // Version published on the server: "" until checked, "unknown (...)" when
 // the version file could not be read.
 const char * otaAvailableVersion(void);

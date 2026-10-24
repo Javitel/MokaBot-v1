@@ -4,6 +4,7 @@
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
 #include <HTTPUpdate.h>
+#include <Update.h>
 #include <Preferences.h>
 #include "logic/moka.hpp"
 #include "taskCores.hpp"
@@ -27,11 +28,18 @@
 #define OTA_PREFS_NAMESPACE "my-app"
 #define OTA_URL_KEY         "otaUrl"
 // How long the final status (error / up to date) stays on screen.
-#define OTA_RESULT_SHOW_MS  5000
+#define OTA_RESULT_SHOW_MS     5000
+// How long a found update waits for the user to confirm it.
+#define OTA_CONFIRM_TIMEOUT_MS 60000
+#define OTA_WAIT_STEP_MS       100
 
 static volatile bool otaRunning = false;
 static volatile bool otaShowing = false;
 static volatile int otaPercent = -1;
+static volatile bool otaAwaiting = false;
+static volatile bool otaOfferReinstall = false;
+static volatile bool otaConfirmRequested = false;
+static volatile bool otaCancelRequested = false;
 static char availableVersion[32] = "";
 static char otaStatus[32] = "";
 
@@ -149,8 +157,33 @@ static void otaTask(void *param){
       setStatus("OTA: no version file");
       goto finished;
     }
-    if(compareVersions(remoteVersion, FIRMWARE_VERSION) <= 0){
-      setStatus("OTA: up to date");
+    {
+      int comparison = compareVersions(remoteVersion, FIRMWARE_VERSION);
+      if(comparison < 0){
+        // Older on the server: never downgrade.
+        setStatus("OTA: up to date");
+        goto finished;
+      }
+      if(otaCancelRequested){
+        setStatus("OTA: cancelled");
+        goto finished;
+      }
+      // Newer version, or the same one (offered as a reinstall): nothing is
+      // downloaded until the user confirms it.
+      otaOfferReinstall = (comparison == 0);
+      setStatus(otaOfferReinstall ? "OTA: up to date" : "OTA: new version");
+    }
+    otaAwaiting = true;
+    for(uint32_t waited = 0;
+        !otaConfirmRequested && !otaCancelRequested && waited < OTA_CONFIRM_TIMEOUT_MS;
+        waited += OTA_WAIT_STEP_MS){
+      vTaskDelay(pdMS_TO_TICKS(OTA_WAIT_STEP_MS));
+    }
+    otaAwaiting = false;
+    if(!otaConfirmRequested || otaCancelRequested){
+      // A declined reinstall keeps showing "up to date".
+      if(otaCancelRequested) setStatus("OTA: cancelled");
+      else if(!otaOfferReinstall) setStatus("OTA: not confirmed");
       goto finished;
     }
 
@@ -162,6 +195,10 @@ static void otaTask(void *param){
     httpUpdate.rebootOnUpdate(true);
     httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     httpUpdate.onProgress([](int current, int total){
+      // Cancel during the download: aborting the flash write makes the update
+      // fail; only the inactive slot was written, so the running firmware
+      // stays.
+      if(otaCancelRequested && Update.isRunning()) Update.abort();
       int percent = total > 0 ? (int)(current * 100LL / total) : 0;
       otaPercent = percent;
       char text[sizeof(otaStatus)];
@@ -183,7 +220,10 @@ static void otaTask(void *param){
 
     // On success the board has already rebooted; only the other results
     // get here.
-    if(result == HTTP_UPDATE_NO_UPDATES){
+    if(otaCancelRequested){
+      setStatus("OTA: cancelled");
+    }
+    else if(result == HTTP_UPDATE_NO_UPDATES){
       setStatus("OTA: up to date");
     }
     else{
@@ -196,7 +236,10 @@ static void otaTask(void *param){
 finished:
   otaPercent = -1;
   otaRunning = false;
-  vTaskDelay(pdMS_TO_TICKS(OTA_RESULT_SHOW_MS));
+  // Show the result for a while; Cancel (or a cancel made earlier) closes it.
+  for(uint32_t shown = 0; !otaCancelRequested && shown < OTA_RESULT_SHOW_MS; shown += OTA_WAIT_STEP_MS){
+    vTaskDelay(pdMS_TO_TICKS(OTA_WAIT_STEP_MS));
+  }
   if(!otaRunning) otaShowing = false;
   vTaskDelete(NULL);
 }
@@ -206,6 +249,10 @@ void otaStartCheck(void){
   otaRunning = true;
   otaShowing = true;
   otaPercent = -1;
+  otaAwaiting = false;
+  otaOfferReinstall = false;
+  otaConfirmRequested = false;
+  otaCancelRequested = false;
   availableVersion[0] = '\0';
   setStatus("OTA: starting");
   // Network work, next to the WiFi stack; HTTPS needs a large stack.
@@ -227,6 +274,22 @@ const char * otaStatusText(void){
 
 int otaProgress(void){
   return otaPercent;
+}
+
+bool otaAwaitingConfirm(void){
+  return otaAwaiting;
+}
+
+bool otaConfirmIsReinstall(void){
+  return otaOfferReinstall;
+}
+
+void otaConfirm(void){
+  if(otaAwaiting) otaConfirmRequested = true;
+}
+
+void otaCancel(void){
+  if(otaShowing) otaCancelRequested = true;
 }
 
 const char * otaInstalledVersion(void){
