@@ -11,6 +11,7 @@
 #include "logic/moka.hpp"
 #include "logic/pressureSensor.hpp"
 #include "logic/ota.hpp"
+#include "logic/brewHistory.hpp"
 #include <Update.h>
 #define HTTP_PORT 80
 // Reachable as http://mokabot.local (mDNS) and, on routers that register DHCP
@@ -56,10 +57,7 @@ static void appendJson(String &json, const char *name, double value, int decimal
 }
 
 static float currentInternalPressure(){
-  if(!isnan(getCurrentTemp())){
-    return getPressureByTemp(getCurrentTemp(),getCurrentPressure());
-  }
-  return getCurrentPressure()/100000;
+  return brewInternalPressure();
 }
 
 // {"temp":<C>,"pressure":<bar>}
@@ -259,6 +257,13 @@ void sendBrew() {
 void sendData() {
   server->send(200, "application/json", retrieveData());
 }
+// GET /brewHistory?session=S&from=N: the recorded brew samples (all of them
+// for a new session, otherwise only those from index N).
+void sendBrewHistory() {
+  long session = server->hasArg("session") ? server->arg("session").toInt() : -1;
+  long from = server->hasArg("from") ? server->arg("from").toInt() : 0;
+  server->send(200, "application/json", brewHistoryJson(session, from));
+}
 void sendBrewData() {
   server->send(200, "application/json", retrieveExtractionData());
 }
@@ -390,6 +395,7 @@ void serverStart(){
   server->on("/", HTTP_GET, sendBrew);
   server->on("/temperature", HTTP_GET, sendData);
   server->on("/brewInfo", HTTP_GET, sendBrewData);
+  server->on("/brewHistory", HTTP_GET, sendBrewHistory);
   server->on("/settingsInfo", HTTP_GET, sendSettingsValues);
   server->on("/settings", HTTP_GET, sendSettings);
   server->on("/set", HTTP_GET, handleUpdate);

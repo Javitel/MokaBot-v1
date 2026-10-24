@@ -38,8 +38,9 @@
   <button onclick="document.location='settings'">Go to Settings</button>
 
   <script>
-    var MAX_POINTS = 250;
-    var BREWING = 2;
+    var BREWING = 2;       // PID extraction: temperature + pressure
+    var POLL_ACTIVE_MS = 2000;
+    var POLL_IDLE_MS = 5000;
 
     function formatTime(seconds) {
       var s = Math.floor(seconds);
@@ -107,24 +108,50 @@
       });
     });
 
-    function addPoint(dataset, x, y) {
-      dataset.data.push({ x: x, y: y });
-      if (dataset.data.length > MAX_POINTS) dataset.data.shift();
+    // Shows or hides the pressure line and its axis (manual power records
+    // temperature only).
+    function showPressure(visible) {
+      chart.data.datasets[1].hidden = !visible;
+      chart.options.scales.yPressure.display = visible;
     }
 
-    function update() {
-      fetch("/brewInfo")
+    // ---- Brew history: the device records every brew (one sample per
+    // second). The page loads the whole session once, then asks only for the
+    // samples after the last one it has.
+    var session = -1;   // session shown on the chart
+    var next = 0;       // index of the next sample to request
+
+    function addSamples(samples) {
+      samples.forEach(function (s) {
+        // s = [seconds, tempC | null, pressureBar | null]
+        if (s[1] !== null) chart.data.datasets[0].data.push({ x: s[0], y: s[1] });
+        if (s[2] !== null) chart.data.datasets[1].data.push({ x: s[0], y: s[2] });
+      });
+    }
+
+    function loadHistory() {
+      fetch("/brewHistory?session=" + session + "&from=" + next)
         .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
-        .then(function (d) {
-          if (d.status !== BREWING) return;
-          if (d.temp !== null && d.temp !== -127) addPoint(chart.data.datasets[0], d.time, d.temp);
-          if (d.pressure !== null) addPoint(chart.data.datasets[1], d.time, d.pressure);
-          chart.update();
+        .then(function (h) {
+          // New brew, first load, or the device restarted (fewer samples than
+          // already shown): start the chart over with the samples received.
+          if (h.session !== session || h.next < next) {
+            chart.data.datasets.forEach(function (dataset) { dataset.data = []; });
+            showPressure(h.mode === BREWING);
+            session = h.session;
+          }
+          addSamples(h.samples);
+          next = h.next;
+          if (h.samples.length) chart.update();
+          setTimeout(loadHistory, h.active ? POLL_ACTIVE_MS : POLL_IDLE_MS);
         })
-        .catch(console.error);
+        .catch(function (err) {
+          console.error(err);
+          setTimeout(loadHistory, POLL_IDLE_MS);
+        });
     }
 
-    setInterval(update, 1000);
+    loadHistory();
   </script>
 </body>
 </html>

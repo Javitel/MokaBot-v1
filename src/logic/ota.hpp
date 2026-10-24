@@ -5,8 +5,9 @@
 // flashes it and reboots. The base URL is stored in Preferences and can be
 // changed from the settings web page.
 //
-// The current firmware version is sent in the x-ESP32-version header, so a
-// server can answer 304 (Not Modified) when there is nothing newer.
+// Before downloading, the device reads <base URL>/<file name>.version (written
+// by ota-images.py next to the image) and only updates when that version is
+// newer than its own. Without a version file it downloads the image anyway.
 
 #include <stdbool.h>
 
@@ -24,6 +25,11 @@ bool otaInProgress(void);
 const char * otaStatusText(void);
 // Download progress 0-100, or -1 when no download is in progress.
 int otaProgress(void);
+// Version of the running firmware.
+const char * otaInstalledVersion(void);
+// Version published on the server: "" until checked, "unknown" without a
+// version file.
+const char * otaAvailableVersion(void);
 
 #ifdef __cplusplus
 } // extern "C"

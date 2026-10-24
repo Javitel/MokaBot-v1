@@ -517,6 +517,7 @@ static void switch_page(lv_scr_load_anim_t anim)
 static lv_obj_t * ui_OtaBackdrop;
 static lv_obj_t * ui_OtaPopup;
 static lv_obj_t * ui_OtaStatusLabel;
+static lv_obj_t * ui_OtaVersionLabel;
 static lv_obj_t * ui_OtaBar;
 
 static void create_ota_popup(void)
@@ -533,7 +534,7 @@ static void create_ota_popup(void)
     lv_obj_add_flag(ui_OtaBackdrop, LV_OBJ_FLAG_HIDDEN);
 
     ui_OtaPopup = lv_obj_create(ui_Screen1);
-    lv_obj_set_size(ui_OtaPopup, 300, 150);
+    lv_obj_set_size(ui_OtaPopup, 300, 200);
     lv_obj_center(ui_OtaPopup);
     lv_obj_clear_flag(ui_OtaPopup, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_flag(ui_OtaPopup, LV_OBJ_FLAG_HIDDEN);
@@ -543,10 +544,17 @@ static void create_ota_popup(void)
     lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
 
+    // "Installed: x / Available: y"
+    ui_OtaVersionLabel = lv_label_create(ui_OtaPopup);
+    lv_label_set_text(ui_OtaVersionLabel, "");
+    lv_obj_set_style_text_font(ui_OtaVersionLabel, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_set_style_text_align(ui_OtaVersionLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
+    lv_obj_align(ui_OtaVersionLabel, LV_ALIGN_TOP_MID, 0, 30);
+
     ui_OtaStatusLabel = lv_label_create(ui_OtaPopup);
     lv_label_set_text(ui_OtaStatusLabel, "");
     lv_obj_set_style_text_font(ui_OtaStatusLabel, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
-    lv_obj_align(ui_OtaStatusLabel, LV_ALIGN_CENTER, 0, -5);
+    lv_obj_align(ui_OtaStatusLabel, LV_ALIGN_TOP_MID, 0, 90);
 
     ui_OtaBar = lv_bar_create(ui_OtaPopup);
     lv_obj_set_size(ui_OtaBar, 240, 16);
@@ -583,6 +591,18 @@ static void ota_popup_timer(lv_timer_t * timer)
         strncpy(shownStatus, status, sizeof(shownStatus) - 1);
         shownStatus[sizeof(shownStatus) - 1] = '\0';
         lv_label_set_text(ui_OtaStatusLabel, shownStatus);
+    }
+
+    // Versions: the available one is known once the check has run.
+    static char shownVersions[64] = "";
+    const char * available = otaAvailableVersion();
+    char versions[64];
+    snprintf(versions, sizeof(versions), "Installed: %s\nAvailable: %s",
+             otaInstalledVersion(), available[0] ? available : "checking...");
+    if(strcmp(versions, shownVersions) != 0) {
+        strcpy(shownVersions, versions);
+        lv_label_set_text(ui_OtaVersionLabel, shownVersions);
+        lv_obj_align(ui_OtaVersionLabel, LV_ALIGN_TOP_MID, 0, 30);
     }
 
     int percent = otaProgress();

@@ -20,7 +20,7 @@
 #include "logic/moka.hpp"
 #include "logic/pressureSensor.hpp"
 #include "logic/webserver.hpp"
-#include "logic/ota.hpp"
+#include "logic/brewHistory.hpp"
 #include "taskCores.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -110,8 +110,7 @@ void calculateLabels(void *param){
     int status = getMokaStatus();
 
     // Build every label text first, without touching LVGL.
-    // While an OTA update runs, the IP label shows its progress.
-    String ip = otaInProgress() ? String(otaStatusText()) : String(getIp());
+    String ip = getIp();
     String tempText = (currentTemp <= -50.0 || isnan(currentTemp)) ? String("DISC.") : formatTemp(currentTemp, "");
     // Pressure moves in thousandths of a bar, so it needs more precision than
     // temperatures; 1 decimal would freeze the label at "1.0bar".
@@ -187,6 +186,8 @@ void setup() {
   lvglMutex = xSemaphoreCreateMutex();
   // I2C users (PID reads the BMP280, sensors, pressure) on CORE_I2C, with the
   // touch task; LVGL drawing and label updates alone on CORE_UI.
+  // Records the brew curve for the brew page (before the web server starts).
+  brewHistoryStart();
   xTaskCreatePinnedToCore(process, "process",2048, NULL, 5, &PIDTask, CORE_I2C);
   xTaskCreatePinnedToCore(updateSensors, "sensors",4096, NULL, 5, &SensorTask, CORE_I2C);
   // 4096: the BMP read path plus ESP-IDF's I2C error logging (printf)

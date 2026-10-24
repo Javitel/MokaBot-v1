@@ -2,6 +2,7 @@
 #include <WiFi.h>
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
+#include <HTTPClient.h>
 #include <HTTPUpdate.h>
 #include <Preferences.h>
 #include "logic/moka.hpp"
@@ -31,6 +32,7 @@
 static volatile bool otaRunning = false;
 static volatile bool otaShowing = false;
 static volatile int otaPercent = -1;
+static char availableVersion[24] = "";
 static char otaStatus[32] = "";
 
 static void setStatus(const char *text){
@@ -64,6 +66,49 @@ static String otaFirmwareUrl(){
   return base + OTA_FIRMWARE_FILE;
 }
 
+// <base URL>/<firmware file without .bin>.version
+static String otaVersionUrl(){
+  String url = otaFirmwareUrl();
+  if(url.endsWith(".bin")) url.remove(url.length() - 4);
+  return url + ".version";
+}
+
+// GETs a small text file; true with its trimmed content on HTTP 200.
+static bool fetchText(const String &url, String &out){
+  HTTPClient http;
+  WiFiClient plain;
+  WiFiClientSecure secure;
+  bool begun;
+  if(url.startsWith("https://")){
+    secure.setInsecure();
+    begun = http.begin(secure, url);
+  }
+  else{
+    begun = http.begin(plain, url);
+  }
+  if(!begun) return false;
+  int code = http.GET();
+  if(code == HTTP_CODE_OK){
+    out = http.getString();
+    out.trim();
+  }
+  http.end();
+  return code == HTTP_CODE_OK && out.length() > 0;
+}
+
+// Compares dotted versions numerically ("1.10.0" > "1.9.2"): <0, 0 or >0.
+static int compareVersions(const String &a, const String &b){
+  int ia = 0, ib = 0;
+  while(ia < (int)a.length() || ib < (int)b.length()){
+    long na = 0, nb = 0;
+    while(ia < (int)a.length() && a[ia] != '.') { if(isdigit((unsigned char)a[ia])) na = na * 10 + (a[ia] - '0'); ia++; }
+    while(ib < (int)b.length() && b[ib] != '.') { if(isdigit((unsigned char)b[ib])) nb = nb * 10 + (b[ib] - '0'); ib++; }
+    if(na != nb) return na < nb ? -1 : 1;
+    ia++; ib++;
+  }
+  return 0;
+}
+
 static void otaTask(void *param){
   String url = otaFirmwareUrl();
 
@@ -75,7 +120,19 @@ static void otaTask(void *param){
   }
   else{
     setStatus("OTA: checking");
-    Serial.printf("OTA: checking %s\n", url.c_str());
+    String versionUrl = otaVersionUrl();
+    String remoteVersion;
+    bool knowsVersion = fetchText(versionUrl, remoteVersion);
+    strlcpy(availableVersion, knowsVersion ? remoteVersion.c_str() : "unknown", sizeof(availableVersion));
+    Serial.printf("OTA: installed %s, available %s (%s)\n", FIRMWARE_VERSION, availableVersion, versionUrl.c_str());
+
+    if(knowsVersion && compareVersions(remoteVersion, FIRMWARE_VERSION) <= 0){
+      setStatus("OTA: up to date");
+      goto finished;
+    }
+
+    setStatus("OTA: downloading");
+    Serial.printf("OTA: downloading %s\n", url.c_str());
     // Nothing should heat while the firmware is being replaced.
     setMokaStatus(0);
 
@@ -112,6 +169,7 @@ static void otaTask(void *param){
     }
   }
 
+finished:
   otaPercent = -1;
   otaRunning = false;
   vTaskDelay(pdMS_TO_TICKS(OTA_RESULT_SHOW_MS));
@@ -124,6 +182,7 @@ void otaStartCheck(void){
   otaRunning = true;
   otaShowing = true;
   otaPercent = -1;
+  availableVersion[0] = '\0';
   setStatus("OTA: starting");
   // Network work, next to the WiFi stack; HTTPS needs a large stack.
   if(xTaskCreatePinnedToCore(otaTask, "ota", 8192, NULL, 2, NULL, CORE_I2C) != pdPASS){
@@ -144,4 +203,12 @@ const char * otaStatusText(void){
 
 int otaProgress(void){
   return otaPercent;
+}
+
+const char * otaInstalledVersion(void){
+  return FIRMWARE_VERSION;
+}
+
+const char * otaAvailableVersion(void){
+  return availableVersion;
 }
