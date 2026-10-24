@@ -55,7 +55,8 @@ static void historyTask(void *param){
 
     xSemaphoreTake(historyMutex, portMAX_DELAY);
     if(recording && status != lastStatus){
-      // New extraction or manual run: start a fresh history.
+      // New extraction or manual run: clear the previous history and start
+      // a fresh one (the last brew stays available until then).
       sessionId++;
       sessionMode = status;
       totalSamples = 0;

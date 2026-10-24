@@ -3,6 +3,7 @@
 // Brew history: one sample per second of the current (or last) extraction
 // (status 2) or manual power run (status 3), kept on the device so the brew
 // page can load the whole curve at once and then fetch only new samples.
+// The last brew stays available until the next one starts, which clears it.
 
 #ifdef __cplusplus
 extern "C" {
