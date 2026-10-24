@@ -30,6 +30,9 @@ double temperature;
 double bloomDefaultTargetTime = 0;
 double bloomCurrentTargetTime = 0;
 double bloomOffset = 0;
+// Manual power mode switches itself off this many degrees above the boiling
+// point (may be negative). Saved in Preferences, set from the settings page.
+int manualCutoffAboveBoiling = 3;
 boolean bloomfinished = false;
 boolean brewstart = false;
 double bloomTime = 0;
@@ -170,6 +173,7 @@ void recoverBrewSettings(){
   bloomDefaultTargetTime = MokaPreferences.getFloat("bloomTime", bloomDefaultTargetTime);
   bloomCurrentTargetTime = MokaPreferences.getFloat("bloomTime", bloomCurrentTargetTime);
   bloomOffset = MokaPreferences.getFloat("bloomOffset", bloomOffset);
+  manualCutoffAboveBoiling = MokaPreferences.getInt("cutoffAbove", manualCutoffAboveBoiling);
 
 }
 
@@ -206,8 +210,6 @@ MokaPreferences.end();
 myPID.setGains(p,i,d);
 }
 
-// Manual mode switches itself off this far above the boiling point.
-#define MANUAL_CUTOFF_ABOVE_BOILING 3.0
 
 // Boiling point (C) at the current ambient pressure; the calibrated boiling
 // temperature when no valid pressure reading is available yet.
@@ -237,9 +239,9 @@ BaseType_t xWasDelayed;
     }
     else if(mokaStatus == 3){
       // Manual power: fixed duty cycle, no PID, until the boiling point
-      // (at the current pressure) + MANUAL_CUTOFF_ABOVE_BOILING is reached.
+      // (at the current pressure) + manualCutoffAboveBoiling is reached.
       connected=true;
-      if(current >= currentBoilingPoint() + MANUAL_CUTOFF_ABOVE_BOILING){
+      if(current >= currentBoilingPoint() + manualCutoffAboveBoiling){
         digitalWrite(pinHeater,getrelayStatus(LOW));
         setMokaStatus(0);
       }
@@ -327,6 +329,17 @@ void skipBloom(){
   }
     
 }
+void setManualCutoff(int degreesAboveBoiling){
+    MokaPreferences.begin("my-app", false);
+    manualCutoffAboveBoiling = degreesAboveBoiling;
+    MokaPreferences.putInt("cutoffAbove", manualCutoffAboveBoiling);
+    MokaPreferences.end();
+}
+
+int getManualCutoff(){
+  return manualCutoffAboveBoiling;
+}
+
 void setBloomOffset(double overrideTemp){
     MokaPreferences.begin("my-app", false);
     bloomOffset = overrideTemp;

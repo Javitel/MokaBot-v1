@@ -20,6 +20,7 @@
 #include "logic/moka.hpp"
 #include "logic/pressureSensor.hpp"
 #include "logic/webserver.hpp"
+#include "logic/ota.hpp"
 #include "taskCores.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -109,7 +110,8 @@ void calculateLabels(void *param){
     int status = getMokaStatus();
 
     // Build every label text first, without touching LVGL.
-    String ip = getIp();
+    // While an OTA update runs, the IP label shows its progress.
+    String ip = otaInProgress() ? String(otaStatusText()) : String(getIp());
     String tempText = (currentTemp <= -50.0 || isnan(currentTemp)) ? String("DISC.") : formatTemp(currentTemp, "");
     // Pressure moves in thousandths of a bar, so it needs more precision than
     // temperatures; 1 decimal would freeze the label at "1.0bar".

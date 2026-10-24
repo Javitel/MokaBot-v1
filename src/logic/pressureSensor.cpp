@@ -20,17 +20,33 @@ Adafruit_BMP280 bmp;
 static const uint8_t BMP_CHIP_IDS[] = { 0x58, 0x56, 0x57, 0x60 };
 
 // Diagnostic: lists every address that ACKs on the sensor I2C bus.
+// Short timeout while scanning: on a stuck bus every probe times out, and
+// 112 probes at the normal 200 ms took ~22 s of boot time.
+#define I2C_SCAN_TIMEOUT_MS 10
+
 static void scanI2cBus(){
   Serial.print("I2C devices found:");
+  Wire.setTimeOut(I2C_SCAN_TIMEOUT_MS);
   int count = 0;
+  int timeouts = 0;
   for(uint8_t address = 0x08; address < 0x78; address++){
     Wire.beginTransmission(address);
-    if(Wire.endTransmission() == 0){
+    uint8_t result = Wire.endTransmission();
+    if(result == 0){
       Serial.printf(" 0x%02X", address);
       count++;
     }
+    else if(result == 5){ // 5 = timeout
+      timeouts++;
+    }
   }
+  Wire.setTimeOut(I2C_TIMEOUT_MS);
   Serial.println(count ? "" : " none");
+  // Timeouts (rather than NACKs) mean the bus itself is not working:
+  // SDA/SCL held low, missing pull-ups or wiring.
+  if(timeouts > 0){
+    Serial.printf("I2C bus: %d probe timeouts - check SDA/SCL wiring and pull-up resistors\n", timeouts);
+  }
 }
 
 // Tries both addresses and every accepted chip ID; logs what was found.

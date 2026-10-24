@@ -20,11 +20,21 @@
       position: relative;
       height: 400px;
     }
+    .line-colors {
+      margin: 8px 0;
+    }
+    .line-colors label {
+      margin-right: 12px;
+    }
   </style>
 </head>
 <body>
   <h2>MokaBot</h2>
   <div class="chart-box"><canvas id="chart"></canvas></div>
+  <div class="line-colors">
+    <label>Temperature line <input type="color" id="tempColor" value="#059e8a"></label>
+    <label>Pressure line <input type="color" id="pressureColor" value="#ff7a5c"></label>
+  </div>
   <button onclick="document.location='settings'">Go to Settings</button>
 
   <script>
@@ -65,6 +75,36 @@
           yPressure: { position: "right", min: 0.85, max: 1.8, title: { display: true, text: "Pressure (bar)" }, grid: { drawOnChartArea: false } }
         }
       }
+    });
+
+    // ---- Line colours: picked here, saved in this browser (shared by the brew
+    // and debug pages). Storage can be unavailable (private mode): then the
+    // pickers still work for the current visit.
+    var COLOR_KEYS = { tempColor: "mokabot.tempColor", pressureColor: "mokabot.pressureColor" };
+    var COLOR_TARGETS = {
+      tempColor: { dataset: 0, axis: "yTemp" },
+      pressureColor: { dataset: 1, axis: "yPressure" }
+    };
+
+    function applyLineColor(pickerId, color) {
+      var target = COLOR_TARGETS[pickerId];
+      var dataset = chart.data.datasets[target.dataset];
+      dataset.borderColor = color;
+      dataset.backgroundColor = color;
+      chart.options.scales[target.axis].title.color = color;
+      chart.update();
+    }
+
+    Object.keys(COLOR_KEYS).forEach(function (pickerId) {
+      var picker = document.getElementById(pickerId);
+      var saved = null;
+      try { saved = localStorage.getItem(COLOR_KEYS[pickerId]); } catch (e) {}
+      if (saved) picker.value = saved;
+      applyLineColor(pickerId, picker.value);
+      picker.addEventListener("input", function () {
+        applyLineColor(pickerId, picker.value);
+        try { localStorage.setItem(COLOR_KEYS[pickerId], picker.value); } catch (e) {}
+      });
     });
 
     function addPoint(dataset, x, y) {

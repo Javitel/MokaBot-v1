@@ -21,6 +21,10 @@ void setMokaStatus(int status);
 void manualPowerOn(int percent);
 void setManualPower(int percent);
 int getManualPower();
+// Degrees above the boiling point at which manual power switches off
+// (negative = below). Saved in Preferences.
+void setManualCutoff(int degreesAboveBoiling);
+int getManualCutoff();
 void brewMokaManual(double time);
 void setBloomTime(double overrideTime);
 void setBloomOffset(double overrideTime);

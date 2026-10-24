@@ -6,6 +6,7 @@
 #include "ui.h"
 #include "nvs.h"
 #include "devices/beep.hpp"
+#include "logic/ota.hpp"
 
 #define UI_NVS_NAMESPACE "ui"
 #define UI_NVS_COLOR_KEY "btnColor"
@@ -419,9 +420,18 @@ static void create_color_panel(void)
     lv_obj_center(label);
 }
 
+// Colour button: tap opens the colour panel, long press checks for a
+// firmware update (OTA). SHORT_CLICKED so a long press does not also open
+// the panel.
 static void color_open_event(lv_event_t * e)
 {
-    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    lv_event_code_t code = lv_event_get_code(e);
+    if(code == LV_EVENT_LONG_PRESSED) {
+        beepDouble();
+        otaStartCheck();
+        return;
+    }
+    if(code != LV_EVENT_SHORT_CLICKED) return;
     beep();
     // Sync the controls with the current colour, then show the panel on top.
     lv_colorwheel_set_rgb(ui_ColorWheel, lv_color_hex(color));
@@ -498,6 +508,93 @@ static void switch_page(lv_scr_load_anim_t anim)
     lv_scr_load_anim(to, anim, PAGE_SLIDE_MS, 0, false);
 }
 
+// ---- OTA popup ---------------------------------------------------------------
+// Modal window showing the progress of a firmware update (started with a long
+// press on the colour button). The update runs in its own task; this only
+// reads its status from an LVGL timer, so LVGL is only touched here.
+#define OTA_POPUP_REFRESH_MS 200
+
+static lv_obj_t * ui_OtaBackdrop;
+static lv_obj_t * ui_OtaPopup;
+static lv_obj_t * ui_OtaStatusLabel;
+static lv_obj_t * ui_OtaBar;
+
+static void create_ota_popup(void)
+{
+    // Blocks touches on the screen while the update runs.
+    ui_OtaBackdrop = lv_obj_create(ui_Screen1);
+    lv_obj_set_size(ui_OtaBackdrop, LV_PCT(100), LV_PCT(100));
+    lv_obj_center(ui_OtaBackdrop);
+    lv_obj_set_style_radius(ui_OtaBackdrop, 0, LV_PART_MAIN);
+    lv_obj_set_style_border_width(ui_OtaBackdrop, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_color(ui_OtaBackdrop, lv_color_black(), LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(ui_OtaBackdrop, LV_OPA_50, LV_PART_MAIN);
+    lv_obj_clear_flag(ui_OtaBackdrop, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ui_OtaBackdrop, LV_OBJ_FLAG_HIDDEN);
+
+    ui_OtaPopup = lv_obj_create(ui_Screen1);
+    lv_obj_set_size(ui_OtaPopup, 300, 150);
+    lv_obj_center(ui_OtaPopup);
+    lv_obj_clear_flag(ui_OtaPopup, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(ui_OtaPopup, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_t * title = lv_label_create(ui_OtaPopup);
+    lv_label_set_text(title, "Firmware update");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+
+    ui_OtaStatusLabel = lv_label_create(ui_OtaPopup);
+    lv_label_set_text(ui_OtaStatusLabel, "");
+    lv_obj_set_style_text_font(ui_OtaStatusLabel, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_align(ui_OtaStatusLabel, LV_ALIGN_CENTER, 0, -5);
+
+    ui_OtaBar = lv_bar_create(ui_OtaPopup);
+    lv_obj_set_size(ui_OtaBar, 240, 16);
+    lv_obj_align(ui_OtaBar, LV_ALIGN_BOTTOM_MID, 0, -5);
+    lv_bar_set_range(ui_OtaBar, 0, 100);
+    lv_obj_add_flag(ui_OtaBar, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void ota_popup_timer(lv_timer_t * timer)
+{
+    static char shownStatus[40] = "";
+    bool popupHidden = lv_obj_has_flag(ui_OtaPopup, LV_OBJ_FLAG_HIDDEN);
+
+    if(!otaInProgress()) {
+        if(!popupHidden) {
+            lv_obj_add_flag(ui_OtaPopup, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(ui_OtaBackdrop, LV_OBJ_FLAG_HIDDEN);
+            shownStatus[0] = '\0';
+        }
+        return;
+    }
+
+    if(popupHidden) {
+        lv_obj_move_foreground(ui_OtaBackdrop);
+        lv_obj_move_foreground(ui_OtaPopup);
+        lv_obj_clear_flag(ui_OtaBackdrop, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(ui_OtaPopup, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    // Status without the "OTA: " prefix used on the IP label.
+    const char * status = otaStatusText();
+    if(strncmp(status, "OTA: ", 5) == 0) status += 5;
+    if(strcmp(status, shownStatus) != 0) {
+        strncpy(shownStatus, status, sizeof(shownStatus) - 1);
+        shownStatus[sizeof(shownStatus) - 1] = '\0';
+        lv_label_set_text(ui_OtaStatusLabel, shownStatus);
+    }
+
+    int percent = otaProgress();
+    if(percent >= 0) {
+        lv_bar_set_value(ui_OtaBar, percent, LV_ANIM_OFF);
+        lv_obj_clear_flag(ui_OtaBar, LV_OBJ_FLAG_HIDDEN);
+    }
+    else {
+        lv_obj_add_flag(ui_OtaBar, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
 static void screen_gesture_event(lv_event_t * e)
 {
     if(lv_event_get_code(e) != LV_EVENT_GESTURE) return;
@@ -505,6 +602,8 @@ static void screen_gesture_event(lv_event_t * e)
     // and while the colour panel is open (its slider/wheel are dragged).
     if(lv_event_get_current_target(e) != lv_scr_act()) return;
     if(!lv_obj_has_flag(ui_ColorPanel, LV_OBJ_FLAG_HIDDEN)) return;
+    // No page switching while a firmware update is shown.
+    if(otaInProgress()) return;
 
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
     if(dir == LV_DIR_LEFT) switch_page(LV_SCR_LOAD_ANIM_MOVE_LEFT);
@@ -685,7 +784,7 @@ void ui_Screen1_screen_init(void)
     lv_label_set_text(ui_LabelColor, LV_SYMBOL_EDIT);
     lv_obj_set_style_text_font(ui_LabelColor, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_center(ui_LabelColor);
-    lv_obj_add_event_cb(ui_ButtonColor, color_open_event, LV_EVENT_CLICKED, NULL);
+    lv_obj_add_event_cb(ui_ButtonColor, color_open_event, LV_EVENT_ALL, NULL);
 
     ui_ButtonUnits = lv_btn_create(ui_Screen1);
     lv_obj_set_size(ui_ButtonUnits, 50, 50);
@@ -699,6 +798,8 @@ void ui_Screen1_screen_init(void)
     lv_obj_add_event_cb(ui_ButtonUnits, units_button_event, LV_EVENT_ALL, NULL);
 
     create_color_panel();
+    create_ota_popup();
+    lv_timer_create(ota_popup_timer, OTA_POPUP_REFRESH_MS, NULL);
 
     // Second page for the swipe (see switch_page); starts empty.
     ui_ScreenPower = lv_obj_create(NULL);

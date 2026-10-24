@@ -2,7 +2,6 @@
 #include "WebServer.h"
 #include <WiFi.h>
 #include <WiFiProvisioner.h>
-#include "SPIFFS.h"
 #include <ESPmDNS.h>
 #include <Preferences.h>
 #include <LovyanGFX.hpp>
@@ -11,6 +10,8 @@
 #include "ui.h"
 #include "logic/moka.hpp"
 #include "logic/pressureSensor.hpp"
+#include "logic/ota.hpp"
+#include <Update.h>
 #define HTTP_PORT 80
 // Reachable as http://mokabot.local (mDNS) and, on routers that register DHCP
 // hostnames, as http://mokabot.
@@ -32,6 +33,19 @@ int mokaWifiStatus= 0;
 
 // Appends "name":value to a JSON object body; NaN becomes null.
 // decimals < 0 uses %g with 10 significant digits (for very small values).
+// Appends value as a JSON string literal (quotes, backslashes and control
+// characters escaped).
+static void appendJsonString(String &json, const String &value) {
+  json += '"';
+  for (size_t k = 0; k < value.length(); k++) {
+    char c = value[k];
+    if (c == '"' || c == '\\') { json += '\\'; json += c; }
+    else if ((unsigned char)c < 0x20) { char esc[8]; snprintf(esc, sizeof(esc), "\\u%04x", c); json += esc; }
+    else json += c;
+  }
+  json += '"';
+}
+
 static void appendJson(String &json, const char *name, double value, int decimals = 6) {
   char str[64];
   if (isnan(value)) snprintf(str, sizeof(str), "\"%s\":null", name);
@@ -84,11 +98,16 @@ String retrieveSettings(){
   appendJson(json, "BloomTime", getBloomTargetTime());
   appendJson(json, "BoilTemp", getBoilingTemp(getCurrentPressure()/100000), 2);
   appendJson(json, "BloomOffset", getBloomOffset());
+  appendJson(json, "ManualCutoff", getManualCutoff(), 0);
   appendJson(json, "Fahrenheit", ui_use_fahrenheit() ? 1 : 0, 0);
   appendJson(json, "Decimals", ui_show_decimals() ? 1 : 0, 0);
   char hex[32];
   snprintf(hex, sizeof(hex), ",\"ButtonColor\":\"#%06lx\"", (unsigned long)ui_get_button_color());
   json += hex;
+  json += ",\"OtaUrl\":";
+  appendJsonString(json, otaGetUrl());
+  json += ",\"OtaFile\":";
+  appendJsonString(json, otaFirmwareFile());
   json += "}";
   return json;
 }
@@ -209,8 +228,6 @@ int initNet() {
   }
   preferencesWS.end();
 
-  if(!SPIFFS.begin(true)){
-  }
   serverStart();
   return 0;
 }
@@ -219,13 +236,25 @@ bool isMokaConnected(){
   return WiFi.isConnected();
 }
 
+// Web pages from data/, compiled into the firmware (board_build.embed_files
+// in platformio.ini) so OTA updates them together with the code. Binary
+// embeds are not null-terminated: each has start/end symbols.
+extern const char index_html_start[] asm("_binary_data_index_html_start");
+extern const char index_html_end[] asm("_binary_data_index_html_end");
+extern const char brew_html_start[] asm("_binary_data_brew_html_start");
+extern const char brew_html_end[] asm("_binary_data_brew_html_end");
+extern const char settings_html_start[] asm("_binary_data_settings_html_start");
+extern const char settings_html_end[] asm("_binary_data_settings_html_end");
+
+static void sendEmbeddedPage(const char *start, const char *end) {
+  server->send_P(200, "text/html", start, end - start);
+}
+
 void sendIndex() {
-  File index = SPIFFS.open("/index.html", "r");
-  server->send(200, "text/html", index.readString());
+  sendEmbeddedPage(index_html_start, index_html_end);
 }
 void sendBrew() {
-  File index = SPIFFS.open("/brew.html", "r");
-  server->send(200, "text/html", index.readString());
+  sendEmbeddedPage(brew_html_start, brew_html_end);
 }
 void sendData() {
   server->send(200, "application/json", retrieveData());
@@ -237,8 +266,7 @@ void sendSettingsValues() {
   server->send(200, "application/json", retrieveSettings());
 }
 void sendSettings() {
-  File settings = SPIFFS.open("/settings.html", "r");
-  server->send(200, "text/html", settings.readString());
+  sendEmbeddedPage(settings_html_start, settings_html_end);
 }
 // Reads a "#rrggbb" / "rrggbb" query argument. Returns false if missing or invalid.
 static bool readHexColorArg(const char *name, uint32_t &out) {
@@ -290,12 +318,17 @@ void handleUpdate() {
   if (readArg("BloomTime", 0.0, value)) setBloomTime(value);
   if (readArg("BoilTemp", 0.0, value)) overrideBoiling(value);
   if (readArg("BloomOffset", -20.0, value)) setBloomOffset(value);
+  // Any integer, negative or positive.
+  if (readArg("ManualCutoff", -1e9, value)) setManualCutoff((int)lround(value));
 
   // UI
   uint32_t buttonColor;
   if (readHexColorArg("ButtonColor", buttonColor)) ui_set_button_color(buttonColor);
   if (readArg("Fahrenheit", 0.0, value)) ui_set_use_fahrenheit(value != 0);
   if (readArg("Decimals", 0.0, value)) ui_set_show_decimals(value != 0);
+
+  // OTA
+  if (server->hasArg("OtaUrl")) otaSetUrl(server->arg("OtaUrl"));
 
   server->send(200, "text/plain", "OK");
 }
@@ -312,6 +345,45 @@ static bool beginServer(){
   return false;
 }
 
+// ---- Firmware upload from the settings page --------------------------------
+// The .bin is streamed straight into the inactive OTA partition while it is
+// received, then the board reboots into it.
+static bool firmwareUploadOk = false;
+
+static void handleFirmwareUploadData(){
+  HTTPUpload &upload = server->upload();
+  if(upload.status == UPLOAD_FILE_START){
+    firmwareUploadOk = false;
+    // Nothing should heat while the firmware is being replaced.
+    setMokaStatus(0);
+    Serial.printf("Firmware upload: %s\n", upload.filename.c_str());
+    if(!Update.begin(UPDATE_SIZE_UNKNOWN, U_FLASH)) Update.printError(Serial);
+  }
+  else if(upload.status == UPLOAD_FILE_WRITE){
+    if(Update.isRunning() && Update.write(upload.buf, upload.currentSize) != upload.currentSize){
+      Update.printError(Serial);
+    }
+  }
+  else if(upload.status == UPLOAD_FILE_END){
+    firmwareUploadOk = Update.end(true);
+    if(!firmwareUploadOk) Update.printError(Serial);
+  }
+  else if(upload.status == UPLOAD_FILE_ABORTED){
+    Update.abort();
+  }
+}
+
+static void handleFirmwareUploadDone(){
+  if(firmwareUploadOk){
+    server->send(200, "text/plain", "Firmware updated, rebooting");
+    delay(500); // let the response reach the browser
+    ESP.restart();
+  }
+  else{
+    server->send(500, "text/plain", String("Update failed: ") + Update.errorString());
+  }
+}
+
 void serverStart(){
   server = new MokaWebServer(HTTP_PORT);
   server->on("/debug", HTTP_GET, sendIndex);
@@ -321,6 +393,7 @@ void serverStart(){
   server->on("/settingsInfo", HTTP_GET, sendSettingsValues);
   server->on("/settings", HTTP_GET, sendSettings);
   server->on("/set", HTTP_GET, handleUpdate);
+  server->on("/firmware", HTTP_POST, handleFirmwareUploadDone, handleFirmwareUploadData);
 
   if(beginServer()){
     ip = WiFi.localIP().toString();

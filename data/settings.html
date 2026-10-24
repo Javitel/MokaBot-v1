@@ -56,6 +56,13 @@
     </fieldset>
 
     <fieldset>
+      <legend>Manual power</legend>
+      <label for="ManualCutoff">Switch off at boiling point + (&deg;C):</label>
+      <input type="number" id="ManualCutoff" name="ManualCutoff" placeholder="3" step="1"><br>
+      <small>Whole degrees; negative values switch off below the boiling point.</small>
+    </fieldset>
+
+    <fieldset>
       <legend>Display</legend>
       <!-- An unchecked checkbox is not submitted, so each one drives a hidden
            0/1 field. The hidden fields stay disabled (not sent) until the
@@ -66,6 +73,16 @@
       <input type="hidden" id="Decimals" name="Decimals" disabled>
       <input type="checkbox" id="DecimalsBox" data-target="Decimals">
       <label for="DecimalsBox">Show decimals</label>
+    </fieldset>
+
+    <fieldset>
+      <legend>Firmware update</legend>
+      <label for="OtaUrl">Firmware folder URL:</label>
+      <input type="url" id="OtaUrl" name="OtaUrl" placeholder="http://server/firmware/" size="40"><br>
+      <!-- Read-only, not submitted: the file name depends on the board. -->
+      <label for="OtaFile">This device downloads:</label>
+      <input type="text" id="OtaFile" readonly size="32"><br>
+      <small>Put each board's .bin in that folder. Long press the colour button on the screen to check for an update.</small>
     </fieldset>
 
     <fieldset>
@@ -101,6 +118,15 @@
     <input type="submit" value="Save settings">
     <span id="saveStatus" role="status"></span>
   </form>
+
+  <!-- Separate from the settings form: uploads a firmware .bin to /firmware. -->
+  <fieldset>
+    <legend>Upload firmware</legend>
+    <input type="file" id="firmwareFile" accept=".bin">
+    <button type="button" id="firmwareUpload">Upload</button><br>
+    <progress id="firmwareProgress" max="100" value="0" hidden></progress>
+    <span id="firmwareStatus" role="status"></span>
+  </fieldset>
 
   <script>
     // Fetch all settings as JSON ({inputId: value}) and fill the matching inputs.
@@ -178,6 +204,37 @@
     setColor(colorInput.value);
 
     loadSettings();
+
+    // ---- Firmware upload: sends the chosen .bin, shows progress, then waits
+    // for the device to reboot and reloads the page.
+    document.getElementById("firmwareUpload").addEventListener("click", function () {
+      var file = document.getElementById("firmwareFile").files[0];
+      var status = document.getElementById("firmwareStatus");
+      var progress = document.getElementById("firmwareProgress");
+      if (!file) { status.textContent = "Choose a .bin file first"; return; }
+      if (!confirm("Upload " + file.name + " and reboot the device?")) return;
+
+      var data = new FormData();
+      data.append("firmware", file, file.name);
+      var request = new XMLHttpRequest();
+      request.open("POST", "/firmware");
+      request.upload.onprogress = function (event) {
+        if (event.lengthComputable) progress.value = Math.round(event.loaded * 100 / event.total);
+      };
+      request.onload = function () {
+        if (request.status === 200) {
+          status.textContent = "Firmware updated, rebooting...";
+          setTimeout(function () { location.reload(); }, 15000);
+        } else {
+          status.textContent = request.responseText || ("Upload failed (" + request.status + ")");
+        }
+      };
+      request.onerror = function () { status.textContent = "Upload failed (connection error)"; };
+      progress.value = 0;
+      progress.hidden = false;
+      status.textContent = "Uploading...";
+      request.send(data);
+    });
 
     // ---- Checkboxes backed by hidden 0/1 fields (see the Display fieldset).
     var checkboxes = document.querySelectorAll("input[type=checkbox][data-target]");
