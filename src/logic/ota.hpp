@@ -7,7 +7,7 @@
 //
 // Before downloading, the device reads <base URL>/<file name>.version (written
 // by ota-images.py next to the image) and only updates when that version is
-// newer than its own. Without a version file it downloads the image anyway.
+// newer than its own. Without a readable version file nothing is downloaded.
 
 #include <stdbool.h>
 
@@ -27,8 +27,8 @@ const char * otaStatusText(void);
 int otaProgress(void);
 // Version of the running firmware.
 const char * otaInstalledVersion(void);
-// Version published on the server: "" until checked, "unknown" without a
-// version file.
+// Version published on the server: "" until checked, "unknown (...)" when
+// the version file could not be read.
 const char * otaAvailableVersion(void);
 
 #ifdef __cplusplus

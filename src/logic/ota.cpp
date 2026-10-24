@@ -32,7 +32,7 @@
 static volatile bool otaRunning = false;
 static volatile bool otaShowing = false;
 static volatile int otaPercent = -1;
-static char availableVersion[24] = "";
+static char availableVersion[32] = "";
 static char otaStatus[32] = "";
 
 static void setStatus(const char *text){
@@ -73,8 +73,10 @@ static String otaVersionUrl(){
   return url + ".version";
 }
 
-// GETs a small text file; true with its trimmed content on HTTP 200.
-static bool fetchText(const String &url, String &out){
+// GETs a small text file, following redirects (e.g. GitHub "raw" links).
+// Returns the HTTP status (200 = out holds the trimmed content) or a
+// negative HTTPClient error.
+static int fetchText(const String &url, String &out){
   HTTPClient http;
   WiFiClient plain;
   WiFiClientSecure secure;
@@ -86,14 +88,19 @@ static bool fetchText(const String &url, String &out){
   else{
     begun = http.begin(plain, url);
   }
-  if(!begun) return false;
+  if(!begun) return HTTPC_ERROR_CONNECTION_REFUSED;
+  http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
   int code = http.GET();
   if(code == HTTP_CODE_OK){
     out = http.getString();
     out.trim();
+    if(out.length() == 0) code = HTTPC_ERROR_NO_HTTP_SERVER; // empty file
+  }
+  else if(code < 0){
+    Serial.printf("OTA: %s\n", HTTPClient::errorToString(code).c_str());
   }
   http.end();
-  return code == HTTP_CODE_OK && out.length() > 0;
+  return code;
 }
 
 // Compares dotted versions numerically ("1.10.0" > "1.9.2"): <0, 0 or >0.
@@ -122,11 +129,27 @@ static void otaTask(void *param){
     setStatus("OTA: checking");
     String versionUrl = otaVersionUrl();
     String remoteVersion;
-    bool knowsVersion = fetchText(versionUrl, remoteVersion);
-    strlcpy(availableVersion, knowsVersion ? remoteVersion.c_str() : "unknown", sizeof(availableVersion));
+    int versionCode = fetchText(versionUrl, remoteVersion);
+    bool knowsVersion = versionCode == HTTP_CODE_OK;
+    if(knowsVersion){
+      strlcpy(availableVersion, remoteVersion.c_str(), sizeof(availableVersion));
+    }
+    else if(versionCode > 0){
+      // e.g. "unknown (HTTP 404)": the .version file is not at that URL.
+      snprintf(availableVersion, sizeof(availableVersion), "unknown (HTTP %d)", versionCode);
+    }
+    else{
+      strlcpy(availableVersion, "unknown (no answer)", sizeof(availableVersion));
+    }
     Serial.printf("OTA: installed %s, available %s (%s)\n", FIRMWARE_VERSION, availableVersion, versionUrl.c_str());
 
-    if(knowsVersion && compareVersions(remoteVersion, FIRMWARE_VERSION) <= 0){
+    // The version file decides: without it nothing is downloaded, and only a
+    // newer version is installed.
+    if(!knowsVersion){
+      setStatus("OTA: no version file");
+      goto finished;
+    }
+    if(compareVersions(remoteVersion, FIRMWARE_VERSION) <= 0){
       setStatus("OTA: up to date");
       goto finished;
     }
@@ -137,6 +160,7 @@ static void otaTask(void *param){
     setMokaStatus(0);
 
     httpUpdate.rebootOnUpdate(true);
+    httpUpdate.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
     httpUpdate.onProgress([](int current, int total){
       int percent = total > 0 ? (int)(current * 100LL / total) : 0;
       otaPercent = percent;
