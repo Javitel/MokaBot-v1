@@ -70,6 +70,11 @@ void ui_initBoot(void);
 // Power page (swipe left/right on the main screen): the target label shows a
 // 50-100% value that +/- adjust by 1.
 bool ui_power_page(void);
+// Profile page (third swipe page): the target label shows the selected saved
+// brew (A/B/C, or "Empty"); +/- step through the saved ones.
+bool ui_profile_page(void);
+int ui_get_selected_profile(void);
+void ui_select_profile(int delta);
 int ui_get_power_percent(void);
 void ui_adjust_power_percent(int delta);
 void ui_save_power_percent(void);

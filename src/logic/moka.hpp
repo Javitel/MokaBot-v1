@@ -6,7 +6,8 @@ extern "C" {
 void init(void);
 void pidUpdate(void);
 void updateSensors(void *param);
-void updateAmbientPressure(void *param);
+// Task: reads the ambient pressure and temperature (BMP280) periodically.
+void getAmbientData(void *param);
 void process(void *param);
 void brewTimer(void *param);   
 void updateTemp(void);
@@ -28,6 +29,8 @@ int getManualCutoff();
 void brewMokaManual(double time);
 void setBloomTime(double overrideTime);
 void setBloomOffset(double overrideTime);
+// Setpoint the PID is currently driving to.
+float getPidTarget();
 float getTargetBoilingTemp();
 float getTargetHeatingTemp();
 void setTargetBoilingTemp(float temp);

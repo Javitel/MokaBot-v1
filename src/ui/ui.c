@@ -143,6 +143,8 @@ void ui_event_Button2(lv_event_t * e)
 void ui_event_Button3(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
+    // EXTRACT does nothing on the profile page (selection only for now).
+    if(ui_profile_page()) return;
     if(event_code == LV_EVENT_LONG_PRESSED) {
         ui_note_long_press();
         if(ui_power_page()) {
@@ -169,7 +171,10 @@ void ui_event_Button4(lv_event_t * e)
 {
     if(lv_event_get_code(e) == LV_EVENT_SHORT_CLICKED) {
         beep();
-        if(ui_power_page()) {
+        if(ui_profile_page()) {
+            ui_select_profile(1);
+        }
+        else if(ui_power_page()) {
             ui_adjust_power_percent(1);
             // Running in manual power: apply the new percentage right away.
             if(getMokaStatus() == 3) setManualPower(ui_get_power_percent());
@@ -182,7 +187,10 @@ void ui_event_Button5(lv_event_t * e)
 {
     if(lv_event_get_code(e) == LV_EVENT_SHORT_CLICKED) {
         beep();
-        if(ui_power_page()) {
+        if(ui_profile_page()) {
+            ui_select_profile(-1);
+        }
+        else if(ui_power_page()) {
             ui_adjust_power_percent(-1);
             if(getMokaStatus() == 3) setManualPower(ui_get_power_percent());
         }

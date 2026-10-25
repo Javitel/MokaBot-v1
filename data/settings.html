@@ -119,6 +119,19 @@
     <span id="saveStatus" role="status"></span>
   </form>
 
+  <!-- Separate from the settings form: deletes a brew saved in slot A/B/C. -->
+  <fieldset>
+    <legend>Saved brews</legend>
+    <label for="brewSlot">Slot:</label>
+    <select id="brewSlot">
+      <option value="A">A</option>
+      <option value="B">B</option>
+      <option value="C">C</option>
+    </select>
+    <button type="button" id="brewDelete" disabled>Delete</button>
+    <span id="brewDeleteStatus" role="status"></span>
+  </fieldset>
+
   <!-- Separate from the settings form: uploads a firmware .bin to /firmware. -->
   <fieldset>
     <legend>Upload firmware</legend>
@@ -204,6 +217,52 @@
     setColor(colorInput.value);
 
     loadSettings();
+
+    // ---- Saved brews: the dropdown shows what each slot holds; Delete is
+    // only enabled for a slot that holds a brew.
+    var brewSlots = {};
+    var BREW_MODE_NAMES = { 2: "extraction", 3: "manual power" };
+    var slotSelect = document.getElementById("brewSlot");
+    var deleteButton = document.getElementById("brewDelete");
+
+    function formatSeconds(seconds) {
+      return String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0");
+    }
+
+    function updateDeleteButton() {
+      deleteButton.disabled = !brewSlots[slotSelect.value];
+    }
+
+    function loadBrewSlots() {
+      fetch("/brewSlots")
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function (data) {
+          brewSlots = data;
+          Array.prototype.forEach.call(slotSelect.options, function (option) {
+            var slot = data[option.value];
+            option.textContent = option.value + (slot
+              ? " - " + formatSeconds(slot.seconds) + " " + (BREW_MODE_NAMES[slot.mode] || "brew")
+              : " - empty");
+          });
+          updateDeleteButton();
+        })
+        .catch(console.error);
+    }
+
+    slotSelect.addEventListener("change", updateDeleteButton);
+
+    deleteButton.addEventListener("click", function () {
+      var name = slotSelect.value;
+      var status = document.getElementById("brewDeleteStatus");
+      if (!confirm("Delete the brew saved in slot " + name + "?")) return;
+      status.textContent = "Deleting...";
+      fetch("/brewDelete?slot=" + name, { method: "POST" })
+        .then(function (r) { return r.text().then(function (text) { status.textContent = text; }); })
+        .then(loadBrewSlots)
+        .catch(function () { status.textContent = "Delete failed (connection error)"; });
+    });
+
+    loadBrewSlots();
 
     // ---- Firmware upload: sends the chosen .bin, shows progress, then waits
     // for the device to reboot and reloads the page.

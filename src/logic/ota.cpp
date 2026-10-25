@@ -6,6 +6,7 @@
 #include <HTTPUpdate.h>
 #include <Update.h>
 #include <Preferences.h>
+#include "logic/prefsLock.hpp"
 #include "logic/moka.hpp"
 #include "taskCores.hpp"
 
@@ -49,17 +50,17 @@ static void setStatus(const char *text){
 
 String otaGetUrl(){
   Preferences prefs;
-  prefs.begin(OTA_PREFS_NAMESPACE, true);
+  prefsLock(); prefs.begin(OTA_PREFS_NAMESPACE, true);
   String url = prefs.getString(OTA_URL_KEY, "");
-  prefs.end();
+  prefs.end(); prefsUnlock();
   return url;
 }
 
 void otaSetUrl(const String &url){
   Preferences prefs;
-  prefs.begin(OTA_PREFS_NAMESPACE, false);
+  prefsLock(); prefs.begin(OTA_PREFS_NAMESPACE, false);
   prefs.putString(OTA_URL_KEY, url);
-  prefs.end();
+  prefs.end(); prefsUnlock();
 }
 
 const char * otaFirmwareFile(){

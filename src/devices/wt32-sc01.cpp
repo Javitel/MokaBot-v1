@@ -193,7 +193,8 @@ static void my_touch_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
 void displayInit(){
   tft.begin();
   tft.setRotation(3);
-  tft.setBrightness(100);
+  // Backlight 0-255 (26 = 10%).
+  tft.setBrightness(55);
 
   lv_init();
   #if LV_USE_LOG != 0

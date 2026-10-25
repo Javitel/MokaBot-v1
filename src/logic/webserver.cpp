@@ -4,6 +4,7 @@
 #include <WiFiProvisioner.h>
 #include <ESPmDNS.h>
 #include <Preferences.h>
+#include "logic/prefsLock.hpp"
 #include <LovyanGFX.hpp>
 #include <iostream>
 #include <string.h>
@@ -149,6 +150,7 @@ void provisioningWifi(){
     provisioner.onSuccess(
       [](const char *ssid, const char *password, const char *input) {
         //Serial.printf("Provisioning successful! Connected to SSID: %s\n", ssid);
+        prefsLock(); preferencesWS.begin("my-app", false);
         if(WiFi.isConnected()){
       preferencesWS.putString("SSID", ssid);
     }
@@ -156,6 +158,7 @@ void provisioningWifi(){
           //Serial.printf("Password: %s\n", password);
           preferencesWS.putString("Password", password);
         }
+        preferencesWS.end(); prefsUnlock();
       }
     );
 
@@ -204,9 +207,12 @@ int initNet() {
   // Must be set before the station starts to be used in the DHCP request.
   WiFi.setHostname(HOSTNAME);
 
-  preferencesWS.begin("my-app", false);
+  // Read the credentials and close the store right away: the provisioning
+  // portal below can run for minutes and must not keep settings locked.
+  prefsLock(); preferencesWS.begin("my-app", false);
   String ssid = preferencesWS.getString("SSID", "");
   String pass = preferencesWS.getString("Password", "");
+  preferencesWS.end(); prefsUnlock();
 
   bool connected = !(ssid.equals("") && pass.equals("")) && connectWiFi(ssid, pass);
   // The provisioning portal blocks until it connects; repeat only if it returns
@@ -217,14 +223,12 @@ int initNet() {
     ip = "Provisioning...";
     provisioningWifi();
     if(provisioningCancelled){
-      preferencesWS.end();
       WiFi.disconnect();
       ip = "Disconnected";
       return -1;
     }
     connected = WiFi.status() == WL_CONNECTED;
   }
-  preferencesWS.end();
 
   serverStart();
   return 0;
@@ -263,6 +267,32 @@ void sendBrewHistory() {
   long session = server->hasArg("session") ? server->arg("session").toInt() : -1;
   long from = server->hasArg("from") ? server->arg("from").toInt() : 0;
   server->send(200, "application/json", brewHistoryJson(session, from));
+}
+// POST /brewSave?slot=A|B|C: saves the finished brew into that slot.
+void handleBrewSave() {
+  String slot = server->arg("slot");
+  BrewSlotResult result = slot.length() == 1 ? brewHistorySaveSlot(slot[0]) : BREW_SLOT_INVALID;
+  switch(result){
+    case BREW_SLOT_SAVED:   server->send(200, "text/plain", "Saved to slot " + slot); break;
+    case BREW_SLOT_INVALID: server->send(400, "text/plain", "Unknown slot"); break;
+    case BREW_SLOT_NOT_OFF: server->send(409, "text/plain", "Switch the moka OFF first"); break;
+    case BREW_SLOT_EMPTY:   server->send(404, "text/plain", "No finished brew to save"); break;
+    default:                server->send(500, "text/plain", "Could not write the slot"); break;
+  }
+}
+// POST /brewDelete?slot=A|B|C: deletes the brew saved in that slot.
+void handleBrewDelete() {
+  String slot = server->arg("slot");
+  BrewSlotResult result = slot.length() == 1 ? brewHistoryDeleteSlot(slot[0]) : BREW_SLOT_INVALID;
+  switch(result){
+    case BREW_SLOT_SAVED:   server->send(200, "text/plain", "Slot " + slot + " deleted"); break;
+    case BREW_SLOT_INVALID: server->send(400, "text/plain", "Unknown slot"); break;
+    default:                server->send(500, "text/plain", "Could not delete the slot"); break;
+  }
+}
+// GET /brewSlots: what each saved slot holds.
+void sendBrewSlots() {
+  server->send(200, "application/json", brewSlotsJson());
 }
 void sendBrewData() {
   server->send(200, "application/json", retrieveExtractionData());
@@ -396,6 +426,9 @@ void serverStart(){
   server->on("/temperature", HTTP_GET, sendData);
   server->on("/brewInfo", HTTP_GET, sendBrewData);
   server->on("/brewHistory", HTTP_GET, sendBrewHistory);
+  server->on("/brewSave", HTTP_POST, handleBrewSave);
+  server->on("/brewDelete", HTTP_POST, handleBrewDelete);
+  server->on("/brewSlots", HTTP_GET, sendBrewSlots);
   server->on("/settingsInfo", HTTP_GET, sendSettingsValues);
   server->on("/settings", HTTP_GET, sendSettings);
   server->on("/set", HTTP_GET, handleUpdate);
@@ -425,10 +458,10 @@ void serverStart(){
 void resetWiFi(){
   WiFi.disconnect();
   ip = "Disconnected";
-  preferencesWS.begin("my-app", false);
+  prefsLock(); preferencesWS.begin("my-app", false);
   preferencesWS.putString("SSID", "");
   preferencesWS.putString("Password", "");
-   preferencesWS.end();
+   preferencesWS.end(); prefsUnlock();
 }
 
 const char * getIp() {

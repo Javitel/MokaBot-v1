@@ -5,6 +5,7 @@
 #include <AutoPID.h>
 #include "moka.hpp"
 #include <Preferences.h>
+#include "logic/prefsLock.hpp"
 #include <time.h>
 #include "logic/pressureSensor.hpp"
 #include "devices/boardPins.hpp"
@@ -143,7 +144,7 @@ BaseType_t xWasDelayed;
   }
 }
 
-void updateAmbientPressure(void *param){
+void getAmbientData(void *param){
 
     // Initialise the xLastWakeTime variable with the current time.
 TickType_t xLastWakeTime = xTaskGetTickCount();
@@ -151,6 +152,8 @@ const TickType_t xFrequency = pdMS_TO_TICKS(2000);
 BaseType_t xWasDelayed;
   while(true){
         updateCurrentPressure();
+        // Ambient temperature too: the PID task reads it from a variable.
+        updateAmbientTemp();
         xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
   }
 }
@@ -202,11 +205,11 @@ digitalWrite(pinHeater,getrelayStatus(LOW));
 ads.setGain(0); 
 ads.setDataRate(7); 
 ads.begin();
-MokaPreferences.begin("my-app", false);
+prefsLock(); MokaPreferences.begin("my-app", false);
 recoverPid();
 recoverResistors();
 recoverBrewSettings();
-MokaPreferences.end(); 
+MokaPreferences.end(); prefsUnlock(); 
 myPID.setGains(p,i,d);
 }
 
@@ -313,11 +316,11 @@ void brewTimer(void *param){
 }
 
 void setBloomTime(double overrideTime){
-    MokaPreferences.begin("my-app", false);
+    prefsLock(); MokaPreferences.begin("my-app", false);
     bloomCurrentTargetTime = overrideTime;
     bloomDefaultTargetTime= overrideTime;
     MokaPreferences.putFloat("bloomTime", bloomDefaultTargetTime);
-    MokaPreferences.end();
+    MokaPreferences.end(); prefsUnlock();
 }
 void setManualBloomTime(double overrideTime){
     bloomCurrentTargetTime = overrideTime;
@@ -330,10 +333,10 @@ void skipBloom(){
     
 }
 void setManualCutoff(int degreesAboveBoiling){
-    MokaPreferences.begin("my-app", false);
+    prefsLock(); MokaPreferences.begin("my-app", false);
     manualCutoffAboveBoiling = degreesAboveBoiling;
     MokaPreferences.putInt("cutoffAbove", manualCutoffAboveBoiling);
-    MokaPreferences.end();
+    MokaPreferences.end(); prefsUnlock();
 }
 
 int getManualCutoff(){
@@ -341,10 +344,10 @@ int getManualCutoff(){
 }
 
 void setBloomOffset(double overrideTemp){
-    MokaPreferences.begin("my-app", false);
+    prefsLock(); MokaPreferences.begin("my-app", false);
     bloomOffset = overrideTemp;
     MokaPreferences.putFloat("bloomOffset", bloomOffset);
-    MokaPreferences.end();
+    MokaPreferences.end(); prefsUnlock();
 }
 
 double getBloomTargetTime(){
@@ -500,6 +503,12 @@ void brewMokaManual(double time){
   bloomCurrentTargetTime = time;
   setMokaStatus(2);
 }
+// Setpoint the PID is currently driving to (bloom or boiling target while
+// extracting, heating target while preheating).
+float getPidTarget(){
+  return target;
+}
+
 float getTargetBoilingTemp(){
     return boil;
   }
@@ -531,20 +540,28 @@ void getResistorValues(double *data){
 }
 
 void setPID(double newP, double newI, double newD){
-  MokaPreferences.begin("my-app", false);
+  prefsLock(); MokaPreferences.begin("my-app", false);
   p = newP; i = newI; d = newD;
   savePid(newP, newI, newD);
   myPID.setGains(p,i,d);
-  MokaPreferences.end(); 
+  MokaPreferences.end(); prefsUnlock(); 
 }
 void setResistorValues(double newR, double newA, double newB, double newC){
-  MokaPreferences.begin("my-app", false);
+  prefsLock(); MokaPreferences.begin("my-app", false);
   //resistorFixed = newR; ntcRefResistor = newN; ntcBeta = newB;
   shA = newA; shB = newB; shC = newC;
   saveResistorValues(newR, newA, newB, newC);
-  MokaPreferences.end(); 
+  MokaPreferences.end(); prefsUnlock(); 
 }
 
+// Ki scheduled with the heat loss, which grows with the difference between
+// the target and the room: ~0.7 was measured stable at a delta of ~70 C.
+#define KI_PER_DEGREE 0.01
+
+// Applies the scheduled Ki to the PID only: the saved/configured i (shown and
+// saved by the settings page) is left untouched.
 void estimateIntegral(){
-  i = 1.5*(target - getAmbientTemp())/10000.0;
+  double delta = target - getAmbientTemp();
+  if(delta < 0) delta = 0;
+  myPID.setGains(p, KI_PER_DEGREE * delta, d);
 }

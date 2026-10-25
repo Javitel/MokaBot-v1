@@ -55,7 +55,7 @@ TaskHandle_t UITask = NULL;
 TaskHandle_t WebserviceTask = NULL;  
 TaskHandle_t SensorTask = NULL;  
 TaskHandle_t LabelsTasks = NULL;  
-TaskHandle_t PressureTask = NULL; 
+TaskHandle_t AmbientDataTask = NULL; 
 
 String prepareLabel(float value, int precision, String label){
   return String(value, precision)+label;
@@ -148,6 +148,22 @@ void calculateLabels(void *param){
       // Info line shows whether manual power is running.
       extraText = (status == 3) ? "ON" : "OFF";
     }
+    // Profile page: the selected saved brew instead of a target.
+    if(ui_profile_page()){
+      int profile = ui_get_selected_profile();
+      if(profile < 0){
+        targetText = "Empty";
+        extraText = "";
+      }
+      else{
+        targetText = String((char)('A' + profile));
+        int seconds = brewSlotSeconds(profile);
+        char info[32];
+        snprintf(info, sizeof(info), "%02d:%02d %s", seconds / 60, seconds % 60,
+                 brewSlotMode(profile) == 3 ? "manual power" : "extraction");
+        extraText = info;
+      }
+    }
 
     // Apply only what changed.
     xSemaphoreTake(lvglMutex, portMAX_DELAY);
@@ -188,11 +204,11 @@ void setup() {
   // touch task; LVGL drawing and label updates alone on CORE_UI.
   // Records the brew curve for the brew page (before the web server starts).
   brewHistoryStart();
-  xTaskCreatePinnedToCore(process, "process",2048, NULL, 5, &PIDTask, CORE_I2C);
+  xTaskCreatePinnedToCore(process, "process",2048, NULL, 5, &PIDTask, CORE_UI);
   xTaskCreatePinnedToCore(updateSensors, "sensors",4096, NULL, 5, &SensorTask, CORE_I2C);
   // 4096: the BMP read path plus ESP-IDF's I2C error logging (printf)
   // overflowed 2048 ("Stack canary watchpoint triggered (pressure)").
-  xTaskCreatePinnedToCore(updateAmbientPressure, "pressure",4096, NULL, 4, &PressureTask, CORE_I2C);
+  xTaskCreatePinnedToCore(getAmbientData, "ambientData",4096, NULL, 4, &AmbientDataTask, CORE_I2C);
   xTaskCreatePinnedToCore(refreshUI, "UI",4096, NULL, 7, &UITask, CORE_UI);
   xTaskCreatePinnedToCore(calculateLabels, "labels",4096, NULL, 6, &LabelsTasks, CORE_UI);
   // No I2C; next to the WiFi stack (core 0) at low priority.

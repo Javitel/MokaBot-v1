@@ -7,6 +7,7 @@
 #include "nvs.h"
 #include "devices/beep.hpp"
 #include "logic/ota.hpp"
+#include "logic/brewHistory.hpp"
 
 #define UI_NVS_NAMESPACE "ui"
 #define UI_NVS_COLOR_KEY "btnColor"
@@ -453,13 +454,58 @@ static void color_open_event(lv_event_t * e)
 #define POWER_PERCENT_MAX 100
 #define PAGE_SLIDE_MS     300
 
+// ---- Pages ------------------------------------------------------------------
+// Swiping cycles extract -> manual power -> profile (and back). The widgets
+// are moved onto each page's screen object as it slides in.
+#define PAGE_EXTRACT 0
+#define PAGE_POWER   1
+#define PAGE_PROFILE 2
+#define PAGE_COUNT   3
+#define PROFILE_SLOTS 3   // saved brews A, B, C
+
 static lv_obj_t * ui_ScreenPower;
-static volatile bool powerPage = false;
+static lv_obj_t * ui_ScreenProfile;
+static volatile int currentPage = PAGE_EXTRACT;
 static volatile int powerPercent = POWER_PERCENT_MAX;
+static volatile int selectedProfile = -1;   // slot index, -1 = none
 
 bool ui_power_page(void)
 {
-    return powerPage;
+    return currentPage == PAGE_POWER;
+}
+
+bool ui_profile_page(void)
+{
+    return currentPage == PAGE_PROFILE;
+}
+
+// Selected saved brew (0..2 = A..C), or -1 when every slot is empty. Falls
+// back to the first saved one when the selection is empty.
+int ui_get_selected_profile(void)
+{
+    int profile = selectedProfile;
+    if(profile < 0 || !brewSlotPresent(profile)) {
+        profile = -1;
+        for(int i = 0; i < PROFILE_SLOTS; i++) {
+            if(brewSlotPresent(i)) { profile = i; break; }
+        }
+        selectedProfile = profile;
+    }
+    return profile;
+}
+
+// Steps through the saved brews only (empty slots are skipped).
+void ui_select_profile(int delta)
+{
+    int current = ui_get_selected_profile();
+    if(current < 0) return;
+    for(int k = 1; k <= PROFILE_SLOTS; k++) {
+        int index = ((current + delta * k) % PROFILE_SLOTS + PROFILE_SLOTS) % PROFILE_SLOTS;
+        if(brewSlotPresent(index)) {
+            selectedProfile = index;
+            return;
+        }
+    }
 }
 
 int ui_get_power_percent(void)
@@ -490,20 +536,29 @@ void ui_adjust_power_percent(int delta)
     powerPercent = value;
 }
 
-static void switch_page(lv_scr_load_anim_t anim)
+static lv_obj_t * page_screen(int page)
+{
+    if(page == PAGE_POWER) return ui_ScreenPower;
+    if(page == PAGE_PROFILE) return ui_ScreenProfile;
+    return ui_Screen1;
+}
+
+// direction +1 = next page, -1 = previous one.
+static void switch_page(int direction, lv_scr_load_anim_t anim)
 {
     lv_obj_t * from = lv_scr_act();
-    lv_obj_t * to = (from == ui_Screen1) ? ui_ScreenPower : ui_Screen1;
+    int page = ((currentPage + direction) % PAGE_COUNT + PAGE_COUNT) % PAGE_COUNT;
+    lv_obj_t * to = page_screen(page);
     // Moving child 0 each time keeps the original stacking order.
     while(lv_obj_get_child_cnt(from) > 0) {
         lv_obj_set_parent(lv_obj_get_child(from, 0), to);
     }
-    powerPage = (to == ui_ScreenPower);
+    currentPage = page;
     // Switching pages stops the moka, like pressing OFF, so a PID brew or a
-    // manual power run never continues on the other page.
+    // manual power run never continues on another page.
     mokaSwitchOff(NULL);
-    // No PREHEAT on the power page.
-    if(powerPage) lv_obj_add_flag(ui_Button2, LV_OBJ_FLAG_HIDDEN);
+    // PREHEAT only on the extract page.
+    if(page != PAGE_EXTRACT) lv_obj_add_flag(ui_Button2, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_clear_flag(ui_Button2, LV_OBJ_FLAG_HIDDEN);
     lv_scr_load_anim(to, anim, PAGE_SLIDE_MS, 0, false);
 }
@@ -680,8 +735,8 @@ static void screen_gesture_event(lv_event_t * e)
     if(otaInProgress()) return;
 
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
-    if(dir == LV_DIR_LEFT) switch_page(LV_SCR_LOAD_ANIM_MOVE_LEFT);
-    else if(dir == LV_DIR_RIGHT) switch_page(LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+    if(dir == LV_DIR_LEFT) switch_page(1, LV_SCR_LOAD_ANIM_MOVE_LEFT);
+    else if(dir == LV_DIR_RIGHT) switch_page(-1, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
     else return;
     // The swipe must not also count as a click on the button it started on.
     lv_indev_wait_release(lv_indev_get_act());
@@ -875,11 +930,14 @@ void ui_Screen1_screen_init(void)
     create_ota_popup();
     lv_timer_create(ota_popup_timer, OTA_POPUP_REFRESH_MS, NULL);
 
-    // Second page for the swipe (see switch_page); starts empty.
+    // Power and profile pages for the swipe (see switch_page); start empty.
     ui_ScreenPower = lv_obj_create(NULL);
     lv_obj_clear_flag(ui_ScreenPower, LV_OBJ_FLAG_SCROLLABLE);
+    ui_ScreenProfile = lv_obj_create(NULL);
+    lv_obj_clear_flag(ui_ScreenProfile, LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_add_event_cb(ui_Screen1, screen_gesture_event, LV_EVENT_GESTURE, NULL);
     lv_obj_add_event_cb(ui_ScreenPower, screen_gesture_event, LV_EVENT_GESTURE, NULL);
+    lv_obj_add_event_cb(ui_ScreenProfile, screen_gesture_event, LV_EVENT_GESTURE, NULL);
     lv_timer_create(pending_settings_timer, 200, NULL);
 
     lv_obj_add_event_cb(ui_Button1, ui_event_Button1, LV_EVENT_ALL, NULL);

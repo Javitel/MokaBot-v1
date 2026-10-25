@@ -1,6 +1,7 @@
 #include "pressureSensor.hpp"
 #include <Adafruit_BMP280.h>
 #include <Preferences.h>
+#include "logic/prefsLock.hpp"
 #include "logic/moka.hpp"
 #include "devices/boardPins.hpp"
 #include <Wire.h>
@@ -76,13 +77,13 @@ float boilingPointPressure = 1.0;
 float readPressure = 0.0;
 
 void initSensor(){
-      preferences.begin("my-app", false); 
+      prefsLock(); preferences.begin("my-app", false); 
 
   boilingPoint = preferences.getFloat("boilingPoint", boilingPoint);
   boilingPointPressure = preferences.getFloat("boilPointPres", boilingPointPressure);
   setTargetBoilingTemp(preferences.getFloat("boilingTemp", getTargetBoilingTemp()));
   setTargetHeatingTemp(preferences.getFloat("heatingTemp", getTargetHeatingTemp()));
-  preferences.end();
+  preferences.end(); prefsUnlock();
   // Shared with the ADS1115 (started later in init()). On boards whose
   // display driver already started Wire on these pins, this is a no-op.
   Wire.begin(PIN_SENSOR_SDA, PIN_SENSOR_SCL);
@@ -134,19 +135,23 @@ static float readBmpChecked(float (*read)(), bool hasPrevious, float previous,
     return NAN;
 }
 
-// Last valid ambient temperature; returned when a read fails so callers
-// (estimateIntegral) never get NAN.
-static float lastAmbientTemp = 20.0;
+// Last valid ambient temperature, refreshed by updateAmbientTemp() in the
+// pressure task. Callers (estimateIntegral in the PID task) only read this
+// variable: no I2C, library or error-logging code runs on their stack.
+static volatile float lastAmbientTemp = 20.0;
 static bool ambientTempValid = false;
 
-float getAmbientTemp(){
-    if(!bmpAvailable) return lastAmbientTemp;
+void updateAmbientTemp(){
+    if(!bmpAvailable) return;
     float temp = readBmpChecked([]{ return bmp.readTemperature(); },
                                 ambientTempValid, lastAmbientTemp, -40.0, 85.0);
     if(!isnan(temp)){
       lastAmbientTemp = temp;
       ambientTempValid = true;
     }
+}
+
+float getAmbientTemp(){
     return lastAmbientTemp;
 }
 
@@ -161,12 +166,12 @@ void updateCurrentPressure(){
   }
 }
 void overrideBoiling(double input){
-    preferences.begin("my-app", false);
+    prefsLock(); preferences.begin("my-app", false);
     boilingPoint = input;
      preferences.putFloat("boilingPoint", boilingPoint);
   boilingPointPressure = readPressure/100000;
   preferences.putFloat("boilPointPres", boilingPointPressure);
-  preferences.end();
+  preferences.end(); prefsUnlock();
 }
 #define CALIBRATION_WINDOW_MS 3000
 #define CALIBRATION_SAMPLE_MS 100
@@ -189,12 +194,12 @@ static void calibrateBoilingTask(void *param){
     }
 
     if(!isnan(maxTemp)){
-        preferences.begin("my-app", false);
+        prefsLock(); preferences.begin("my-app", false);
         boilingPoint = maxTemp;
         preferences.putFloat("boilingPoint", boilingPoint);
         boilingPointPressure = pressureAtMax/100000;
         preferences.putFloat("boilPointPres", boilingPointPressure);
-        preferences.end();
+        preferences.end(); prefsUnlock();
     }
     calibrating = false;
     vTaskDelete(NULL);
@@ -217,15 +222,15 @@ double getCalibratedPressure(){
 }
 
 void saveTargetHeatingTemp(float temp){
-    preferences.begin("my-app", false);
+    prefsLock(); preferences.begin("my-app", false);
     preferences.putFloat("heatingTemp", temp);
-    preferences.end();
+    preferences.end(); prefsUnlock();
 }
 
 void saveTargetBoilingTemp(float temp){
-    preferences.begin("my-app", false);
+    prefsLock(); preferences.begin("my-app", false);
     preferences.putFloat("boilingTemp", temp);
-    preferences.end();
+    preferences.end(); prefsUnlock();
 }
 
 float getBoilingTemp(float pressure){
