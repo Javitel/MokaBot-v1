@@ -34,6 +34,22 @@ double bloomOffset = 0;
 // Manual power mode switches itself off this many degrees above the boiling
 // point (may be negative). Saved in Preferences, set from the settings page.
 int manualCutoffAboveBoiling = 3;
+// Accepted range for manualCutoffAboveBoiling (C relative to boiling).
+#define MANUAL_CUTOFF_MIN -10
+#define MANUAL_CUTOFF_MAX 10
+
+// Hard safety limit for every mode: above this temperature the heater is
+// switched off and the moka goes OFF, whatever the target or cut-off is
+// (a high target or a typo in the settings must not boil the pot dry or drive
+// it to its safety valve). Above the highest target (MAX_BOILING_TARGET) and
+// below the hardware thermostat, which cuts the heater at 140 C.
+#define MAX_SAFE_TEMP 135.0
+
+static int clampManualCutoff(int degrees){
+  if(degrees < MANUAL_CUTOFF_MIN) return MANUAL_CUTOFF_MIN;
+  if(degrees > MANUAL_CUTOFF_MAX) return MANUAL_CUTOFF_MAX;
+  return degrees;
+}
 boolean bloomfinished = false;
 boolean brewstart = false;
 double bloomTime = 0;
@@ -56,14 +72,18 @@ int mokaStatus = 0;
 bool connected=false;
 
 double defaultp = 40.2;//0.03 0.003;
-double defaulti = 0.00075;//0.00045;//0.0004;
+// I setting: integral gain per degree of (target - room temperature); the
+// PID's Ki is scheduled as i * delta (see estimateIntegral). ~0.7 was measured
+// stable at a delta of ~70 C, hence 0.01.
+double defaulti = 0.01;
 double defaultd = 0.085;//0.000002;
 
 double p, i, d;  
 
 double timeWindow =250;
 double pidValue;
-AutoPID myPID(&temperature, &target, &pidValue, 0, timeWindow, defaultp, defaulti, defaultd);
+// Ki starts at 0: estimateIntegral() sets the scheduled value.
+AutoPID myPID(&temperature, &target, &pidValue, 0, timeWindow, defaultp, 0, defaultd);
 
 Preferences MokaPreferences;
 
@@ -160,7 +180,9 @@ BaseType_t xWasDelayed;
 
 void recoverPid(){
   p = MokaPreferences.getFloat("savedP", defaultp);
-  i = MokaPreferences.getFloat("savedI", defaulti);
+  // New key: the old "savedI" held a plain Ki (e.g. 0.00075), which as a
+  // per-degree factor would almost disable the integral.
+  i = MokaPreferences.getFloat("kiPerDegree", defaulti);
   d = MokaPreferences.getFloat("savedD", defaultd);
 }
 void recoverResistors(){
@@ -176,13 +198,14 @@ void recoverBrewSettings(){
   bloomDefaultTargetTime = MokaPreferences.getFloat("bloomTime", bloomDefaultTargetTime);
   bloomCurrentTargetTime = MokaPreferences.getFloat("bloomTime", bloomCurrentTargetTime);
   bloomOffset = MokaPreferences.getFloat("bloomOffset", bloomOffset);
-  manualCutoffAboveBoiling = MokaPreferences.getInt("cutoffAbove", manualCutoffAboveBoiling);
+  // Clamped: a value saved before the limits existed may be out of range.
+  manualCutoffAboveBoiling = clampManualCutoff(MokaPreferences.getInt("cutoffAbove", manualCutoffAboveBoiling));
 
 }
 
 void savePid(double newP, double newI, double newD){
   MokaPreferences.putFloat("savedP", newP);
-  MokaPreferences.putFloat("savedI", newI);
+  MokaPreferences.putFloat("kiPerDegree", newI);
   MokaPreferences.putFloat("savedD", newD);
 }
 void saveResistorValues(double newR, double newA, double newB, double newC){
@@ -210,7 +233,8 @@ recoverPid();
 recoverResistors();
 recoverBrewSettings();
 MokaPreferences.end(); prefsUnlock(); 
-myPID.setGains(p,i,d);
+// Ki is scheduled from the target (0 until a mode sets one).
+estimateIntegral();
 }
 
 
@@ -233,7 +257,16 @@ BaseType_t xWasDelayed;
   while(true){
 //vTaskDelay((150) / portTICK_PERIOD_MS);
     //updateCurrentPressure();
-     if(current <= -127.0 || mokaStatus == 0){
+     if(current > MAX_SAFE_TEMP){
+      // Over-temperature: heater off and moka OFF, in every mode.
+      connected=false;
+      digitalWrite(pinHeater,getrelayStatus(LOW));
+      if(mokaStatus != 0){
+        Serial.printf("Over-temperature (%.1f C > %.0f C): switching off\n", current, MAX_SAFE_TEMP);
+        setMokaStatus(0);
+      }
+    }
+    else if(current <= -127.0 || mokaStatus == 0){
       connected=false;
       digitalWrite(pinHeater,getrelayStatus(LOW));
       // Manual power has no temperature control: losing the sensor stops it
@@ -334,7 +367,7 @@ void skipBloom(){
 }
 void setManualCutoff(int degreesAboveBoiling){
     prefsLock(); MokaPreferences.begin("my-app", false);
-    manualCutoffAboveBoiling = degreesAboveBoiling;
+    manualCutoffAboveBoiling = clampManualCutoff(degreesAboveBoiling);
     MokaPreferences.putInt("cutoffAbove", manualCutoffAboveBoiling);
     MokaPreferences.end(); prefsUnlock();
 }
@@ -444,7 +477,6 @@ void updateTempNTC(){
   refVoltage = refRead;
   //refVoltage= refVoltage * 0.1875/1000;  f
   refVoltage = ads.toVoltage(1)*refVoltage;
-  double temp;
 
 double resistance;
  double lnR;
@@ -464,12 +496,15 @@ vm = ads.toVoltage(1)*ntcRead;
 resistance = (refVoltage - vm)*(resistorFixed/vm);
 aux = shA + (shB * log(resistance)) + (shC * pow(log(resistance), 3));
 kelvin =1.0/aux;
-if(abs((((kelvin- 273.15) + temp) /2) - temp) < 1){
-  temp = ((kelvin- 273.15) * 0.75 )+ temp * 0.25;
-}
-else{
-  temp = kelvin- 273.15;
-}
+  double rawTemp = kelvin - 273.15;
+  // Low-pass filter against the previous valid reading (current): changes
+  // under 2 C are blended 75/25 to reduce noise, larger jumps pass straight
+  // through. Without a valid previous reading (start-up, after a disconnect)
+  // the raw value is used.
+  double temp = rawTemp;
+  if(current > 0 && fabs(rawTemp - current) < 2){
+    temp = (rawTemp * 0.75) + (current * 0.25);
+  }
 
   Serial.println(temp);
   // Serial.println("end");
@@ -497,6 +532,9 @@ void setMokaStatus(int status){
     bloomfinished = false;
     bloomTime = 0;
     brewTime = 0;
+    // A manual bloom (long press EXTRACT: 300 s) only applies to that brew;
+    // the next one uses the saved bloom time again.
+    bloomCurrentTargetTime = bloomDefaultTargetTime;
   }
 }
 void brewMokaManual(double time){
@@ -515,12 +553,16 @@ float getTargetBoilingTemp(){
 float getTargetHeatingTemp(){
     return heat;
   }
+// Upper limits for the targets (set with +/- and loaded from settings).
+#define MAX_HEATING_TARGET 110.0
+#define MAX_BOILING_TARGET 125.0
+
 void setTargetBoilingTemp(float temp){
-  boil = temp;
+  boil = temp > MAX_BOILING_TARGET ? MAX_BOILING_TARGET : temp;
   changePending = true;
   }
 void setTargetHeatingTemp(float temp){
-  heat = temp;
+  heat = temp > MAX_HEATING_TARGET ? MAX_HEATING_TARGET : temp;
   changePending = true;
   }
 
@@ -543,25 +585,26 @@ void setPID(double newP, double newI, double newD){
   prefsLock(); MokaPreferences.begin("my-app", false);
   p = newP; i = newI; d = newD;
   savePid(newP, newI, newD);
-  myPID.setGains(p,i,d);
+  // i is the per-degree factor: re-apply the scheduled Ki (saving any
+  // setting mid-brew must not replace it with the raw factor).
+  estimateIntegral();
   MokaPreferences.end(); prefsUnlock(); 
 }
 void setResistorValues(double newR, double newA, double newB, double newC){
   prefsLock(); MokaPreferences.begin("my-app", false);
-  //resistorFixed = newR; ntcRefResistor = newN; ntcBeta = newB;
+  // Applied right away (not only saved), so the temperature reading and the
+  // settings page use the new values without a reboot.
+  resistorFixed = newR;
   shA = newA; shB = newB; shC = newC;
   saveResistorValues(newR, newA, newB, newC);
   MokaPreferences.end(); prefsUnlock(); 
 }
 
-// Ki scheduled with the heat loss, which grows with the difference between
-// the target and the room: ~0.7 was measured stable at a delta of ~70 C.
-#define KI_PER_DEGREE 0.01
-
-// Applies the scheduled Ki to the PID only: the saved/configured i (shown and
-// saved by the settings page) is left untouched.
+// Schedules Ki with the heat loss, which grows with the difference between
+// the target and the room: Ki = i (the "I" setting, per degree) * delta.
+// Called on every target change and when the PID settings are saved.
 void estimateIntegral(){
   double delta = target - getAmbientTemp();
   if(delta < 0) delta = 0;
-  myPID.setGains(p, KI_PER_DEGREE * delta, d);
+  myPID.setGains(p, i * delta, d);
 }

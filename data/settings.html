@@ -21,7 +21,7 @@
       <legend>PID controller</legend>
       <label for="PVal">P:</label>
       <input type="number" id="PVal" name="PVal" placeholder="1.0" step="0.000001" min="0" max="100"><br>
-      <label for="IVal">I:</label>
+      <label for="IVal">I (per &deg;C of target - room):</label>
       <input type="number" id="IVal" name="IVal" placeholder="1.0" step="0.000001" min="0" max="100"><br>
       <label for="DVal">D:</label>
       <input type="number" id="DVal" name="DVal" placeholder="1.0" step="0.000001" min="0" max="100">
@@ -58,8 +58,8 @@
     <fieldset>
       <legend>Manual power</legend>
       <label for="ManualCutoff">Switch off at boiling point + (&deg;C):</label>
-      <input type="number" id="ManualCutoff" name="ManualCutoff" placeholder="3" step="1"><br>
-      <small>Whole degrees; negative values switch off below the boiling point.</small>
+      <input type="number" id="ManualCutoff" name="ManualCutoff" placeholder="3" step="1" min="-10" max="10"><br>
+      <small>Whole degrees from -10 to +10; negative values switch off below the boiling point.</small>
     </fieldset>
 
     <fieldset>

@@ -250,7 +250,10 @@ float getPressureByTemp(float temp, float pressure){
       return getCurrentPressure()/100000;
     }
     else{
-      float factor = (40700.0/8.3145)*((1/(getCalibratedTemp()+273))-(1/(temp+273)));
-      return (getCalibratedPressure()*exp(factor)/0.986923);
+      // Clausius-Clapeyron from the calibration point. The calibrated pressure
+      // is already in bar, so the result is in bar too (no atm conversion),
+      // and it matches the ambient pressure exactly at the boiling point.
+      float factor = (40700.0/8.3145)*((1/(getCalibratedTemp()+273.15))-(1/(temp+273.15)));
+      return getCalibratedPressure()*exp(factor);
     }
   }
