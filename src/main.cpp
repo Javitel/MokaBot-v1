@@ -165,6 +165,14 @@ void calculateLabels(void *param){
       }
     }
 
+    // A boiling calibration message (running / result / refused) takes the
+    // info line for a few seconds.
+    float calibrationTemp;
+    const char *calibration = calibrationMessage(&calibrationTemp);
+    if(calibration[0] != '\0'){
+      extraText = isnan(calibrationTemp) ? String(calibration) : formatTemp(calibrationTemp, calibration);
+    }
+
     // Apply only what changed.
     xSemaphoreTake(lvglMutex, portMAX_DELAY);
     updateLabel(lastIp, ip, setCurrentIP);

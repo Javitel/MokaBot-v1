@@ -21,11 +21,10 @@ void preheatingOn(lv_event_t * e)
 	setMokaStatus(1);
 }
 
+// Conditions (preheat, target >= 100 C) are checked inside calibrateBoiling().
 void calibrate(lv_event_t * e)
 {
-	if(getMokaStatus() == 1 && getTargetHeatingTemp() >=100.0){
-		calibrateBoiling();
-	}
+	calibrateBoiling();
 }
 
 void boilingOn(lv_event_t * e)

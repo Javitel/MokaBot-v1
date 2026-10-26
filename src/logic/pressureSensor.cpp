@@ -175,8 +175,40 @@ void overrideBoiling(double input){
 }
 #define CALIBRATION_WINDOW_MS 3000
 #define CALIBRATION_SAMPLE_MS 100
+// Calibration only runs while preheating to at least this target, i.e. with
+// the water actually boiling.
+#define CALIBRATION_MIN_TARGET 100.0
+// A measured boiling point outside this range is rejected (sensor fault or
+// water not boiling) and the previous calibration is kept.
+#define CALIBRATION_MIN_VALID  85.0
+#define CALIBRATION_MAX_VALID  105.0
+// How long the calibration message stays on the screen's info line.
+#define CALIBRATION_MESSAGE_MS 4000
 
 static volatile bool calibrating = false;
+
+// Short message about the last calibration for the screen (see
+// calibrationMessage()); empty when there is nothing to show. The temperature
+// is kept apart, in Celsius, so the screen formats it in its selected unit.
+static char calibrationText[32] = "";
+static volatile float calibrationTemp = NAN;
+static volatile uint32_t calibrationTextUntil = 0;
+static volatile bool calibrationTextForever = false;   // while calibrating
+
+static void setCalibrationMessage(const char *text, bool untilReplaced, float temp = NAN){
+    strlcpy(calibrationText, text, sizeof(calibrationText));
+    calibrationTemp = temp;
+    calibrationTextForever = untilReplaced;
+    calibrationTextUntil = millis() + CALIBRATION_MESSAGE_MS;
+}
+
+const char * calibrationMessage(float *temp){
+    *temp = NAN;
+    if(calibrationText[0] == '\0') return "";
+    if(!calibrationTextForever && (int32_t)(millis() - calibrationTextUntil) > 0) return "";
+    *temp = calibrationTemp;
+    return calibrationText;
+}
 
 // Samples the temperature for CALIBRATION_WINDOW_MS and stores the maximum
 // (with the pressure read at that moment) as the boiling calibration point.
@@ -193,7 +225,17 @@ static void calibrateBoilingTask(void *param){
         vTaskDelay(pdMS_TO_TICKS(CALIBRATION_SAMPLE_MS));
     }
 
-    if(!isnan(maxTemp)){
+    if(isnan(maxTemp)){
+        setCalibrationMessage("Calibration: no reading", false);
+    }
+    else if(maxTemp < CALIBRATION_MIN_VALID || maxTemp > CALIBRATION_MAX_VALID){
+        // Implausible boiling point: keep the previous calibration.
+        setCalibrationMessage("Rejected: ", false, maxTemp);
+        Serial.printf("Boiling calibration rejected: %.1f C outside %.0f-%.0f C\n",
+                      maxTemp, CALIBRATION_MIN_VALID, CALIBRATION_MAX_VALID);
+    }
+    else{
+        setCalibrationMessage("Boiling: ", false, maxTemp);
         prefsLock(); preferences.begin("my-app", false);
         boilingPoint = maxTemp;
         preferences.putFloat("boilingPoint", boilingPoint);
@@ -207,11 +249,19 @@ static void calibrateBoilingTask(void *param){
 
 // Non-blocking: runs the sampling window in its own task so the caller (an
 // LVGL event) does not freeze the UI. Ignored while a calibration is running.
+// The conditions are checked here so no caller can skip them: preheat mode
+// with a target of at least CALIBRATION_MIN_TARGET (water boiling).
 void calibrateBoiling(){
     if(calibrating) return;
+    if(getMokaStatus() != 1 || getTargetHeatingTemp() < CALIBRATION_MIN_TARGET){
+        setCalibrationMessage("Needs preheat >=", false, CALIBRATION_MIN_TARGET);
+        return;
+    }
     calibrating = true;
+    setCalibrationMessage("Calibrating...", true);
     if(xTaskCreate(calibrateBoilingTask, "calibrate", 3072, NULL, 5, NULL) != pdPASS){
         calibrating = false;
+        setCalibrationMessage("Calibration failed", false);
     }
 }
 float getCalibratedTemp(){
