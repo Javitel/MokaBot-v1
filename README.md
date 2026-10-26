@@ -44,9 +44,16 @@ Components used:
  - Round switch. [Switch](https://es.aliexpress.com/item/1005013351974257.html)
  - Kettle Connector [Connector](https://es.aliexpress.com/item/1005012049626600.html?)
 
+   I can not provide a reliable source for electronics since it may depend on where you are located or at which point in time you try make your own, just keep in mind BMP280 sensors are not reliable at all, I had to throw away maybe close to a dozen already, dont go cheap on the ADS1115 and BMP280, make sure its for 5V (or be concerned wiring might change) and expect to spend 5-10€ a sensor to make sure the electronics are not dodgy and spend too much time figuring out why pressure is not able to read or the value is off.
+
+   For moka pots, rigt now I use a Delonghi Alicia: It has screw mounting points, heater power is quite good for the volume, heater is built-in the aluminium (like a kettle).
+Other moka pots should work but the experience might be a bit less smooth. Feel free to request new ones, post ideas, STLs... and I will gladly add them.
+
 TO DO add STL files for the different screens
 
 TO DO add wiring diagrams for both screens
+
+TO DO instrucctions (Moka pot, WT32-SC01 base and Waveshare 3.5B base)
 
 ## Points to discuss
 
@@ -101,6 +108,8 @@ Built with [PlatformIO](https://platformio.org/). `pio run` builds both boards (
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Extras
+This project is free to anyone willing to do implement by themselves, but I leave a link for donations [Buy Me a Coffee](https://buymeacoffee.com/javitel)
+
 Also to mention, to disclose any major comment or concern about intellectual property. To this day I am the full owner of the patent around this concept (was a fortunate accident I never considered, like finding a winning lottery ticket) and I was afraid having the source code public and the patent could cause an issue with the concept of ownership in case anyone adds any value to the project. That is why this is a non-commercial license, getting everything out of any dispute related with intellectual property (if anybody is willing to discuss or ask any question regarding that, please let me know)
 ## License
 
