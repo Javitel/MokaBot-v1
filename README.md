@@ -101,6 +101,8 @@ Built with [PlatformIO](https://platformio.org/). `pio run` builds both boards (
 See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Extras
+this project is free to anyone willing to do implement by themselves, but I leave a link for donations [Buy Me a Coffee](buymeacoffee.com/javitel)
+
 Also to mention, to disclose any major comment or concern about intellectual property. To this day I am the full owner of the patent around this concept (was a fortunate accident I never considered, like finding a winning lottery ticket) and I was afraid having the source code public and the patent could cause an issue with the concept of ownership in case anyone adds any value to the project. That is why this is a non-commercial license, getting everything out of any dispute related with intellectual property (if anybody is willing to discuss or ask any question regarding that, please let me know)
 ## License
 
