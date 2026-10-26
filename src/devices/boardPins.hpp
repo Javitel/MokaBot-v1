@@ -19,7 +19,7 @@
 #else // BOARD_WT32_SC01
 
 #define PIN_HEATER      32
-// Sensors share the touch controller's I2C bus (GPIO 18/19). GPIO 21/22 are
+// Sensors share the touch controller's I2C bus (GPIO 18/19).
 // the display's DC and reset lines and must not be used for I2C.
 #define PIN_SENSOR_SDA  18
 #define PIN_SENSOR_SCL  19

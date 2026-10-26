@@ -28,6 +28,10 @@
 
 #define OTA_PREFS_NAMESPACE "my-app"
 #define OTA_URL_KEY         "otaUrl"
+// Folder used until another one is saved from the settings page: the build/
+// folder of the GitHub repository (GitHub redirects "raw" links to
+// raw.githubusercontent.com; redirects are followed).
+#define OTA_DEFAULT_URL     "https://github.com/Javitel/MokaBot-v1/raw/refs/heads/main/build/"
 // How long the final status (error / up to date) stays on screen.
 #define OTA_RESULT_SHOW_MS     5000
 // How long a found update waits for the user to confirm it.
@@ -51,7 +55,8 @@ static void setStatus(const char *text){
 String otaGetUrl(){
   Preferences prefs;
   prefsLock(); prefs.begin(OTA_PREFS_NAMESPACE, true);
-  String url = prefs.getString(OTA_URL_KEY, "");
+  String url = prefs.getString(OTA_URL_KEY, OTA_DEFAULT_URL);
+  if(url.length() == 0) url = OTA_DEFAULT_URL;
   prefs.end(); prefsUnlock();
   return url;
 }
@@ -71,6 +76,8 @@ const char * otaFirmwareFile(){
 static String otaFirmwareUrl(){
   String base = otaGetUrl();
   if(base.length() == 0) return base;
+  // The setting is a folder: make sure it ends with "/" before appending the
+  // file names (firmware and .version).
   if(!base.endsWith("/")) base += "/";
   return base + OTA_FIRMWARE_FILE;
 }
