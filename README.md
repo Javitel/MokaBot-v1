@@ -43,6 +43,7 @@ Components used:
  - C13 female connector. [C13 connector](https://es.aliexpress.com/item/1005009947629857.html)
  - Round switch. [Switch](https://es.aliexpress.com/item/1005013351974257.html)
  - Kettle Connector [Connector](https://es.aliexpress.com/item/1005012049626600.html?)
+ - SSR (Relay) [Relay](https://es.aliexpress.com/item/1005004651776233.html) Activate on HIGH, The dilema with this SSR is about its amperaje, is rated for 2A (440-480w) but the moka pot can use up to 550W, I bridged the security fuse, not recomendable but a small enough ssr does not come mounted to be wired this way and other options are oversized.
 
    I can not provide a reliable source for electronics since it may depend on where you are located or at which point in time you try make your own, just keep in mind BMP280 sensors are not reliable at all, I had to throw away maybe close to a dozen already, dont go cheap on the ADS1115 and BMP280, make sure its for 5V (or be concerned wiring might change) and expect to spend 5-10€ a sensor to make sure the electronics are not dodgy and spend too much time figuring out why pressure is not able to read or the value is off.
 
