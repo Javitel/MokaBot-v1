@@ -11,7 +11,6 @@
 
 // GPIO17 is the camera VSYNC line, free when no camera is attached. The board
 // uses GPIO 1-16, 19-21, 38-48 for LCD, I2C, SD, audio, USB and camera.
-#warning "Waveshare 3.5B: PIN_HEATER is a placeholder, set it to the GPIO the relay is wired to"
 #define PIN_HEATER      17
 // Sensors share the board's I2C bus (also used by touch, IO expander, PMU...).
 #define PIN_SENSOR_SDA  8
@@ -20,7 +19,9 @@
 #else // BOARD_WT32_SC01
 
 #define PIN_HEATER      32
-#define PIN_SENSOR_SDA  21
-#define PIN_SENSOR_SCL  22
+// Sensors share the touch controller's I2C bus (GPIO 18/19). GPIO 21/22 are
+// the display's DC and reset lines and must not be used for I2C.
+#define PIN_SENSOR_SDA  18
+#define PIN_SENSOR_SCL  19
 
 #endif

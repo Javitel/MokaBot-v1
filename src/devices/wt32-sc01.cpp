@@ -4,7 +4,9 @@
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
 #include <lvgl.h>
+#include <Wire.h>
 #include "wt32-sc01.hpp"
+#include "boardPins.hpp"
 
 #define WT32_SC01
 // #define SD_SUPPORTED // external SPI (SD or others)
@@ -27,9 +29,13 @@
 #define TFT_CS      GPIO_NUM_15
 #define TFT_RST     22
 
-#define TOUCH_INT   GPIO_NUM_39
-#define TOUCH_SDA   GPIO_NUM_18
-#define TOUCH_SCL   GPIO_NUM_19
+// Touch controller (FT6336, FT5x06 family) on the I2C bus GPIO 18/19, shared
+// with the BMP280 and ADS1115 (PIN_SENSOR_SDA/SCL). It is read through Arduino
+// Wire like the sensors: a single I2C driver for the whole bus. (LovyanGFX's
+// own touch driver programmed the same I2C hardware separately, so its
+// transfers and Wire's collided.)
+#define TOUCH_ADDR      0x38
+#define TOUCH_REG_DATA  0x02   // TD_STATUS, then P1 XH, XL, YH, YL
 
 class LGFX : public lgfx::LGFX_Device
 {
@@ -38,9 +44,6 @@ class LGFX : public lgfx::LGFX_Device
 
     // provide an instance that matches the type of bus to which the panel is connected.
     lgfx::Bus_SPI _bus_instance; // Instances of spi buses
-
-    //Prepare an instance that matches the type of touchscreen. 
-    lgfx::Touch_FT5x06  _touch_instance;
 
     lgfx::Light_PWM     _light_instance;
 
@@ -117,27 +120,6 @@ public:
       _panel_instance.setLight(&_light_instance);  
     }
 
-    { 
-      auto cfg = _touch_instance.config();
-
-      cfg.x_min      = 0;
-      cfg.x_max      = 319;
-      cfg.y_min      = 0;  
-      cfg.y_max      = 479;
-      cfg.pin_int    = TOUCH_INT;  
-      cfg.bus_shared = true; 
-      cfg.offset_rotation = 0;
-
-      cfg.i2c_port = 0;//I2C_NUM_1;
-      cfg.i2c_addr = 0x38;
-      cfg.pin_sda  = TOUCH_SDA;   
-      cfg.pin_scl  = TOUCH_SCL;   
-      cfg.freq = 400000;  
-
-      _touch_instance.config(cfg);
-      _panel_instance.setTouch(&_touch_instance);  
-    }
-
     setPanel(&_panel_instance); // Set the panel to be used.
   }
 };
@@ -174,11 +156,30 @@ static void my_disp_flush(lv_disp_drv_t *disp, const lv_area_t *area, lv_color_t
 // How often LVGL reads the touch controller on this board.
 #define TOUCH_READ_PERIOD_MS 75
 
+// Reads the first touch point in native panel coordinates (320x480 portrait).
+// False when nothing touches the screen or the read fails.
+static bool readTouchRaw(uint16_t *x, uint16_t *y) {
+    uint8_t data[5];
+    Wire.beginTransmission(TOUCH_ADDR);
+    Wire.write(TOUCH_REG_DATA);
+    if (Wire.endTransmission() != 0) return false;
+    if (Wire.requestFrom((uint8_t)TOUCH_ADDR, (uint8_t)sizeof(data)) != sizeof(data)) return false;
+    Wire.readBytes(data, sizeof(data));
+    uint8_t points = data[0] & 0x0F;
+    if (points == 0 || points > 2) return false;
+    *x = ((data[1] & 0x0F) << 8) | data[2];
+    *y = ((data[3] & 0x0F) << 8) | data[4];
+    return *x < TFT_WIDTH && *y < TFT_HEIGHT;
+}
+
 static void my_touch_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
-    uint16_t touchX, touchY;
-    bool touched = tft.getTouch(&touchX, &touchY);
-    if (!touched) { data->state = LV_INDEV_STATE_REL; }
+    uint16_t rawX, rawY;
+    if (!readTouchRaw(&rawX, &rawY)) { data->state = LV_INDEV_STATE_REL; }
     else {
+      // Same conversion LovyanGFX applied for setRotation(3): swap the axes,
+      // then mirror the new x.
+      uint16_t touchX = (TFT_HEIGHT - 1) - rawY;
+      uint16_t touchY = rawX;
       data->state = LV_INDEV_STATE_PR;
       data->point.x = touchX;
       data->point.y = touchY;
@@ -191,6 +192,11 @@ static void my_touch_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
 }
 
 void displayInit(){
+  // Shared I2C bus (touch + sensors), started before anything uses it;
+  // initSensor()'s Wire.begin() then finds it running.
+  Wire.begin(PIN_SENSOR_SDA, PIN_SENSOR_SCL);
+  Wire.setTimeOut(I2C_TIMEOUT_MS);
+
   tft.begin();
   tft.setRotation(3);
   // Backlight 0-255 (26 = 10%).
