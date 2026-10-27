@@ -98,6 +98,7 @@ String retrieveSettings(){
   appendJson(json, "BoilTemp", getBoilingTemp(getCurrentPressure()/100000), 2);
   appendJson(json, "BloomOffset", getBloomOffset());
   appendJson(json, "ManualCutoff", getManualCutoff(), 0);
+  appendJson(json, "PreheatOffset", getPreheatOffset());
   appendJson(json, "Fahrenheit", ui_use_fahrenheit() ? 1 : 0, 0);
   appendJson(json, "Decimals", ui_show_decimals() ? 1 : 0, 0);
   char hex[32];
@@ -353,6 +354,8 @@ void handleUpdate() {
   if (readArg("BloomTime", 0.0, value)) setBloomTime(value);
   if (readArg("BoilTemp", 0.0, value)) overrideBoiling(value);
   if (readArg("BloomOffset", -20.0, value)) setBloomOffset(value);
+  // Clamped to -10..0 by setPreheatOffset().
+  if (readArg("PreheatOffset", -1e9, value)) setPreheatOffset(value);
   // Any integer, negative or positive.
   if (readArg("ManualCutoff", -1e9, value)) setManualCutoff((int)lround(value));
 

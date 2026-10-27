@@ -95,6 +95,8 @@ void setCurrentIP(const char * text);
 
 void setProTemp(const char * text);
 void setProWeigth(const char * text);
+// EXTRACT button text (PREHEAT on the profile page until its target is reached).
+void setExtractButtonLabel(const char * text);
 void showScaleButton(int activate);
 void showSplashScreen(int activate);
 #ifdef __cplusplus

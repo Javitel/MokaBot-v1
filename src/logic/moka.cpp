@@ -44,6 +44,22 @@ int manualCutoffAboveBoiling = 3;
 // it to its safety valve). Above the highest target (MAX_BOILING_TARGET) and
 // below the hardware thermostat, which cuts the heater at 140 C.
 #define MAX_SAFE_TEMP 135.0
+// Upper limits for the targets (set with +/- and loaded from settings).
+#define MAX_HEATING_TARGET 110.0
+#define MAX_BOILING_TARGET 125.0
+
+// Preheat never goes above the boiling point (at the current pressure) plus
+// this offset, so the water does not boil before extracting. Saved in
+// Preferences, set from the settings page; only zero or negative.
+double preheatOffset = -2;
+#define PREHEAT_OFFSET_MIN -10.0
+#define PREHEAT_OFFSET_MAX 0.0
+
+static double clampPreheatOffset(double degrees){
+  if(degrees < PREHEAT_OFFSET_MIN) return PREHEAT_OFFSET_MIN;
+  if(degrees > PREHEAT_OFFSET_MAX) return PREHEAT_OFFSET_MAX;
+  return degrees;
+}
 
 static int clampManualCutoff(int degrees){
   if(degrees < MANUAL_CUTOFF_MIN) return MANUAL_CUTOFF_MIN;
@@ -89,6 +105,15 @@ Preferences MokaPreferences;
 
 // Handle of the running brewTimer task, NULL when it is not running.
 static TaskHandle_t brewTimerTask = NULL;
+
+// Boiling calibration (see calibrateBoiling): preheat drives to
+// MAX_HEATING_TARGET, past the preheat limit, until the water boils.
+static volatile bool calibrationHeating = false;
+
+// Extraction driven by a saved profile (see profileBrewOn): the PID follows
+// profileTarget instead of the bloom and boiling targets.
+static volatile bool profileBrew = false;
+static volatile double profileTarget = 0;
 
 int getrelayStatus(int status){
   if (status == LOW){
@@ -200,6 +225,7 @@ void recoverBrewSettings(){
   bloomOffset = MokaPreferences.getFloat("bloomOffset", bloomOffset);
   // Clamped: a value saved before the limits existed may be out of range.
   manualCutoffAboveBoiling = clampManualCutoff(MokaPreferences.getInt("cutoffAbove", manualCutoffAboveBoiling));
+  preheatOffset = clampPreheatOffset(MokaPreferences.getFloat("preheatOffset", preheatOffset));
 
 }
 
@@ -244,6 +270,11 @@ static float currentBoilingPoint(){
   float pressure = getCurrentPressure();
   if(pressure > 0) return getBoilingTemp(pressure / 100000);
   return getCalibratedTemp();
+}
+
+float getHeatingLimit(){
+  float limit = currentBoilingPoint() + preheatOffset;
+  return limit < MAX_HEATING_TARGET ? limit : MAX_HEATING_TARGET;
 }
 
 // Defined with the other manual power functions below.
@@ -294,13 +325,22 @@ BaseType_t xWasDelayed;
       startTime = millis() - elapsedTime;
       //startTime = xTaskGetTickCount();
     }
+    // Preheat target checked every cycle: its limit follows the boiling
+    // point, which moves with the ambient pressure.
+    if(getMokaStatus() == 1){
+      double heatingTarget = calibrationHeating ? MAX_HEATING_TARGET : getTargetHeatingTemp();
+      if(heatingTarget != target){
+        target = heatingTarget;
+        estimateIntegral();
+      }
+    }
     if(changePending){
       changePending = false;
-      if(getMokaStatus() == 1){
-          target = heat;
-      }
       if(getMokaStatus() == 2){
-        if(bloomfinished == false && bloomCurrentTargetTime > 0){
+        if(profileBrew){
+          target = profileTarget;
+        }
+        else if(bloomfinished == false && bloomCurrentTargetTime > 0){
           target = getCalibratedTemp() + bloomOffset;
         }
         else{
@@ -338,7 +378,8 @@ void brewTimer(void *param){
 
     if(bloomTime >= bloomCurrentTargetTime || bloomfinished == true){
       bloomfinished = true;
-      target = boil;
+      // A profile brew sets its own target (the bloom is part of its curve).
+      if(!profileBrew) target = boil;
     }
     else{bloomTime = aux/1000;}
     brewTime = aux/1000;
@@ -374,6 +415,30 @@ void setManualCutoff(int degreesAboveBoiling){
 
 int getManualCutoff(){
   return manualCutoffAboveBoiling;
+}
+
+void setPreheatOffset(double degrees){
+    prefsLock(); MokaPreferences.begin("my-app", false);
+    preheatOffset = clampPreheatOffset(degrees);
+    MokaPreferences.putFloat("preheatOffset", preheatOffset);
+    MokaPreferences.end(); prefsUnlock();
+}
+
+double getPreheatOffset(){
+  return preheatOffset;
+}
+
+void calibrationHeatingOn(){
+  setMokaStatus(1);
+  calibrationHeating = true;
+}
+
+void calibrationHeatingOff(){
+  calibrationHeating = false;
+}
+
+bool isCalibrationHeating(){
+  return calibrationHeating;
 }
 
 void setBloomOffset(double overrideTemp){
@@ -427,6 +492,22 @@ void manualPowerOn(int percent){
   if(!temperatureValid()) return;
   setManualPower(percent);
   setMokaStatus(3);
+}
+
+void setProfileTarget(float temp){
+  profileTarget = temp > MAX_BOILING_TARGET ? MAX_BOILING_TARGET : temp;
+  changePending = true;
+}
+
+// Refuses to start without a valid temperature reading. setMokaStatus()
+// clears profileBrew, so it is set after the status.
+void profileBrewOn(float firstTarget){
+  if(!temperatureValid()) return;
+  setMokaStatus(2);
+  // No bloom phase of its own: the saved curve already holds it.
+  bloomCurrentTargetTime = 0;
+  setProfileTarget(firstTarget);
+  profileBrew = true;
 }
 
 // One time window in manual mode: heater on for manualPowerPercent of it.
@@ -527,6 +608,10 @@ int getMokaStatus(){
 void setMokaStatus(int status){
   changePending = true;
   mokaStatus = status;
+  // Any status change ends a profile brew or a calibration (profileBrewOn
+  // and calibrationHeatingOn set them again).
+  profileBrew = false;
+  calibrationHeating = false;
   if(status == 1 || status == 0 || status == 3){
     brewstart = false;
     bloomfinished = false;
@@ -550,13 +635,12 @@ float getPidTarget(){
 float getTargetBoilingTemp(){
     return boil;
   }
+// Limited to getHeatingLimit() when read, as the limit moves with the
+// pressure (the saved value is kept).
 float getTargetHeatingTemp(){
-    return heat;
+    float limit = getHeatingLimit();
+    return heat < limit ? heat : limit;
   }
-// Upper limits for the targets (set with +/- and loaded from settings).
-#define MAX_HEATING_TARGET 110.0
-#define MAX_BOILING_TARGET 125.0
-
 void setTargetBoilingTemp(float temp){
   boil = temp > MAX_BOILING_TARGET ? MAX_BOILING_TARGET : temp;
   changePending = true;

@@ -52,7 +52,10 @@
       <label for="BoilTemp">Boiling point temp:</label>
       <input type="number" id="BoilTemp" name="BoilTemp" placeholder="0" step="0.01" min="0" max="110"><br>
       <label for="BloomOffset">Bloom offset temp:</label>
-      <input type="number" id="BloomOffset" name="BloomOffset" placeholder="0" step="1" min="-15" max="15">
+      <input type="number" id="BloomOffset" name="BloomOffset" placeholder="0" step="1" min="-15" max="15"><br>
+      <label for="PreheatOffset">Preheat limit, boiling point + (&deg;C):</label>
+      <input type="number" id="PreheatOffset" name="PreheatOffset" placeholder="-2" step="0.5" min="-10" max="0"><br>
+      <small>From -10 to 0: preheat never goes above the boiling point plus this value.</small>
     </fieldset>
 
     <fieldset>

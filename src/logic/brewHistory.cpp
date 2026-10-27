@@ -25,6 +25,7 @@ static long sessionId = 0;       // incremented at each new session
 static int sessionMode = 0;      // 2 or 3 (0 before the first session)
 static bool sessionActive = false;
 static uint32_t sessionStartMs = 0;
+static uint8_t sessionPower = 0;                 // manual power percentage
 static SemaphoreHandle_t historyMutex = NULL;
 
 // ---- Saved brew slots ----
@@ -38,7 +39,7 @@ static SemaphoreHandle_t historyMutex = NULL;
 typedef struct {
   uint32_t magic;
   uint8_t  mode;       // 2 extraction, 3 manual power
-  uint8_t  reserved;
+  uint8_t  power;      // manual power percentage (0 = not recorded, older files)
   uint16_t count;      // samples that follow
 } SlotHeader;
 
@@ -49,11 +50,46 @@ typedef struct {
   bool     present;
   uint16_t seconds;
   uint8_t  mode;
+  uint8_t  power;
+  int16_t  preheatDeci;   // temperature of the first sample, 0.1 C; INT16_MIN = none
 } SlotInfo;
 static volatile SlotInfo slotInfo[BREW_SLOT_LAST - BREW_SLOT_FIRST + 1];
 
 static bool readSlotInfo(char slot, SlotInfo *info);
 static void refreshSlotInfo();
+
+// ---- Profile playback ----
+// A saved brew replayed from the profile page: an extraction follows the
+// saved PID target second by second, manual power runs at the saved
+// percentage; both stop at the saved duration (or when the status changes).
+static bool playing = false;
+static int playMode = 0;
+static int playSeconds = 0;          // saved duration
+static int16_t *playTargets = NULL;  // target per second (0.1 C), extractions only
+static uint32_t playStartMs = 0;
+
+static void stopPlayback(){
+  playing = false;
+  free(playTargets);
+  playTargets = NULL;
+}
+
+// Called every second by the history task, with the lock held.
+static void updatePlayback(int status){
+  if(!playing) return;
+  // Switched off, over-temperature, cut-off, another mode...
+  if(status != playMode){
+    stopPlayback();
+    return;
+  }
+  int elapsed = (millis() - playStartMs) / 1000;
+  if(elapsed > playSeconds){
+    stopPlayback();
+    setMokaStatus(0);
+    return;
+  }
+  if(playMode == STATUS_BREWING) setProfileTarget(playTargets[elapsed] / 10.0);
+}
 
 float brewInternalPressure(void){
   if(!isnan(getCurrentTemp())){
@@ -87,10 +123,11 @@ static void historyTask(void *param){
   TickType_t lastWake = xTaskGetTickCount();
   int lastStatus = 0;
   while(true){
+    // Status read with the lock held: brewProfileStart() changes it under
+    // the same lock.
+    xSemaphoreTake(historyMutex, portMAX_DELAY);
     int status = getMokaStatus();
     bool recording = (status == STATUS_BREWING || status == STATUS_MANUAL_POWER);
-
-    xSemaphoreTake(historyMutex, portMAX_DELAY);
     if(recording && status != lastStatus){
       // New extraction or manual run: clear the previous history and start
       // a fresh one (the last brew stays available until then).
@@ -98,9 +135,12 @@ static void historyTask(void *param){
       sessionMode = status;
       totalSamples = 0;
       sessionStartMs = millis();
+      // Saved with the brew, for replaying it as a profile.
+      sessionPower = (uint8_t)getManualPower();
     }
     sessionActive = recording;
     if(recording) recordSample(status);
+    updatePlayback(status);
     xSemaphoreGive(historyMutex);
 
     lastStatus = status;
@@ -137,6 +177,7 @@ BrewSlotResult brewHistorySaveSlot(char slot){
   long oldest = totalSamples > BREW_HISTORY_CAPACITY ? totalSamples - BREW_HISTORY_CAPACITY : 0;
   long count = totalSamples - oldest;
   int mode = sessionMode;
+  uint8_t power = sessionPower;
   BrewSample *copy = NULL;
   if(count > 0 && mode != 0){
     copy = (BrewSample *)malloc(count * sizeof(BrewSample));
@@ -158,7 +199,7 @@ BrewSlotResult brewHistorySaveSlot(char slot){
   File file = SPIFFS.open(path, FILE_WRITE);
   bool ok = (bool)file;
   if(ok){
-    SlotHeader header = { BREW_SLOT_MAGIC, (uint8_t)mode, 0, (uint16_t)count };
+    SlotHeader header = { BREW_SLOT_MAGIC, (uint8_t)mode, power, (uint16_t)count };
     size_t dataSize = count * sizeof(BrewSample);
     ok = file.write((const uint8_t *)&header, sizeof(header)) == sizeof(header) &&
          file.write((const uint8_t *)copy, dataSize) == dataSize;
@@ -183,6 +224,12 @@ BrewSlotResult brewHistoryDeleteSlot(char slot){
   return ok ? BREW_SLOT_SAVED : BREW_SLOT_FS_ERROR;
 }
 
+// Reads the header of an open slot file. Leaves the file at the first sample.
+static bool readHeader(File &file, SlotHeader *header){
+  return file.read((uint8_t *)header, sizeof(*header)) == sizeof(*header) &&
+         header->magic == BREW_SLOT_MAGIC && header->count > 0;
+}
+
 // Reads a slot file's header and duration; false when empty or invalid.
 // samplesOut (optional) receives the sample count.
 static bool readSlotHeader(char slot, SlotInfo *info, uint16_t *samplesOut){
@@ -192,15 +239,18 @@ static bool readSlotHeader(char slot, SlotInfo *info, uint16_t *samplesOut){
   bool found = false;
   File file = SPIFFS.open(path, FILE_READ);
   SlotHeader header;
-  if(file && file.read((uint8_t *)&header, sizeof(header)) == sizeof(header) &&
-     header.magic == BREW_SLOT_MAGIC && header.count > 0){
-    // Duration = time of the last sample.
-    BrewSample last;
+  if(file && readHeader(file, &header)){
+    // Preheat temperature = temperature when the brew started (first
+    // sample); duration = time of the last sample.
+    BrewSample first, last;
+    bool ok = file.read((uint8_t *)&first, sizeof(first)) == sizeof(first);
     file.seek(sizeof(header) + (header.count - 1) * sizeof(BrewSample));
-    if(file.read((uint8_t *)&last, sizeof(last)) == sizeof(last)){
+    if(ok && file.read((uint8_t *)&last, sizeof(last)) == sizeof(last)){
       info->present = true;
       info->seconds = last.seconds;
       info->mode = header.mode;
+      info->power = header.power;
+      info->preheatDeci = first.tempDeci;
       if(samplesOut) *samplesOut = header.count;
       found = true;
     }
@@ -215,11 +265,13 @@ static bool readSlotInfo(char slot, SlotInfo *info){
 
 static void refreshSlotInfo(){
   for(char slot = BREW_SLOT_FIRST; slot <= BREW_SLOT_LAST; slot++){
-    SlotInfo info = { false, 0, 0 };
+    SlotInfo info = { false, 0, 0, 0, INT16_MIN };
     readSlotInfo(slot, &info);
     int index = slot - BREW_SLOT_FIRST;
     slotInfo[index].seconds = info.seconds;
     slotInfo[index].mode = info.mode;
+    slotInfo[index].power = info.power;
+    slotInfo[index].preheatDeci = info.preheatDeci;
     slotInfo[index].present = info.present;
   }
 }
@@ -240,6 +292,101 @@ int brewSlotMode(int index){
   return validSlotIndex(index) ? slotInfo[index].mode : 0;
 }
 
+float brewSlotPreheat(int index){
+  if(!brewSlotPresent(index) || slotInfo[index].preheatDeci == INT16_MIN) return NAN;
+  return slotInfo[index].preheatDeci / 10.0;
+}
+
+bool brewProfileNeedsPreheat(int index){
+  int status = getMokaStatus();
+  if(status != 0 && status != 1) return false;
+  float preheat = brewSlotPreheat(index);
+  if(isnan(preheat)) return false;
+  // Preheat cannot go above its limit: EXTRACT once that is reached.
+  if(preheat > getHeatingLimit()) preheat = getHeatingLimit();
+  float temp = getCurrentTemp();
+  return isnan(temp) || temp < preheat;
+}
+
+// Reads the saved PID target of every second of an extraction slot into a
+// new array of seconds + 1 values (gaps filled with the previous target).
+static int16_t *loadSlotTargets(char slot, int seconds){
+  char path[16];
+  slotPath(slot, path, sizeof(path));
+  if(!ensureSlotsFs()) return NULL;
+  File file = SPIFFS.open(path, FILE_READ);
+  if(!file) return NULL;
+  int16_t *targets = NULL;
+  SlotHeader header;
+  if(readHeader(file, &header)){
+    targets = (int16_t *)malloc((seconds + 1) * sizeof(int16_t));
+    if(targets){
+      for(int s = 0; s <= seconds; s++) targets[s] = INT16_MIN;
+      BrewSample sample;
+      for(uint16_t k = 0; k < header.count; k++){
+        if(file.read((uint8_t *)&sample, sizeof(sample)) != sizeof(sample)) break;
+        if(sample.seconds <= seconds) targets[sample.seconds] = sample.targetDeci;
+      }
+      int16_t last = INT16_MIN;
+      for(int s = 0; s <= seconds; s++){
+        if(targets[s] == INT16_MIN) targets[s] = last;
+        else last = targets[s];
+      }
+      // No target at all (or none before the first gap): nothing to follow.
+      if(targets[0] == INT16_MIN){
+        free(targets);
+        targets = NULL;
+      }
+    }
+  }
+  file.close();
+  return targets;
+}
+
+bool brewProfileStart(int index){
+  if(!brewSlotPresent(index) || historyMutex == NULL) return false;
+  int mode = slotInfo[index].mode;
+  int seconds = slotInfo[index].seconds;
+  int16_t *targets = NULL;
+  if(mode == STATUS_BREWING){
+    targets = loadSlotTargets(BREW_SLOT_FIRST + index, seconds);
+    if(!targets) return false;
+  }
+  else if(mode != STATUS_MANUAL_POWER){
+    return false;
+  }
+
+  xSemaphoreTake(historyMutex, portMAX_DELAY);
+  stopPlayback();
+  playMode = mode;
+  playSeconds = seconds;
+  playTargets = targets;
+  playStartMs = millis();
+  playing = true;
+  if(mode == STATUS_BREWING){
+    profileBrewOn(targets[0] / 10.0);
+  }
+  else{
+    // Slots saved before the percentage was recorded: the last one used.
+    int power = slotInfo[index].power;
+    manualPowerOn(power > 0 ? power : getManualPower());
+  }
+  // Refused (no valid temperature reading).
+  bool started = getMokaStatus() == mode;
+  if(!started) stopPlayback();
+  xSemaphoreGive(historyMutex);
+  Serial.printf("Profile %c: %s\n", BREW_SLOT_FIRST + index, started ? "started" : "could not start");
+  return started;
+}
+
+int brewProfileElapsed(void){
+  if(historyMutex == NULL) return -1;
+  xSemaphoreTake(historyMutex, portMAX_DELAY);
+  int elapsed = playing ? (int)((millis() - playStartMs) / 1000) : -1;
+  xSemaphoreGive(historyMutex);
+  return elapsed;
+}
+
 String brewSlotsJson(){
   String json = "{";
   for(char slot = BREW_SLOT_FIRST; slot <= BREW_SLOT_LAST; slot++){
@@ -248,7 +395,7 @@ String brewSlotsJson(){
     json += slot;
     json += "\":";
 
-    SlotInfo info = { false, 0, 0 };
+    SlotInfo info = { false, 0, 0, 0, INT16_MIN };
     uint16_t sampleCount = 0;
     if(readSlotHeader(slot, &info, &sampleCount)){
       json += "{\"samples\":";

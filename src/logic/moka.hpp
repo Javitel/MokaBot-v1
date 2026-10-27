@@ -26,7 +26,24 @@ int getManualPower();
 // (negative = below). Saved in Preferences.
 void setManualCutoff(int degreesAboveBoiling);
 int getManualCutoff();
+// Preheat is limited to the boiling point + this offset (-10..0 C, default
+// -2). Saved in Preferences.
+void setPreheatOffset(double degrees);
+double getPreheatOffset();
+// Highest preheat target: boiling point (current pressure) + preheat offset,
+// at most 110 C.
+float getHeatingLimit();
+// Boiling calibration: preheat (status 1) towards 110 C, past the preheat
+// limit. Any status change ends it.
+void calibrationHeatingOn();
+void calibrationHeatingOff();
+bool isCalibrationHeating();
 void brewMokaManual(double time);
+// Extraction driven by a saved profile: the PID follows the target given with
+// setProfileTarget() (no bloom/boiling targets) until the status changes.
+// Refuses to start without a valid temperature reading.
+void profileBrewOn(float firstTarget);
+void setProfileTarget(float temp);
 void setBloomTime(double overrideTime);
 void setBloomOffset(double overrideTime);
 // Setpoint the PID is currently driving to.

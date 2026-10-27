@@ -102,7 +102,7 @@ String formatTemp(float celsius, const char *prefix){
 
 void calculateLabels(void *param){
   initCycle = true;
-  String lastIp, lastTempText, lastPressureText, lastTargetText, lastExtraText, lastBloomText, lastBrewText;
+  String lastIp, lastTempText, lastPressureText, lastTargetText, lastExtraText, lastBloomText, lastBrewText, lastExtractText;
   while(true){
     vTaskDelay( pdMS_TO_TICKS( 50 ));
     currentPressure = getCurrentPressure();
@@ -116,6 +116,7 @@ void calculateLabels(void *param){
     // temperatures; 1 decimal would freeze the label at "1.0bar".
     String pressureText = prepareLabel(currentPressure/100000, 3, "bar");
     String targetText, extraText, bloomText, brewText;
+    String extractText = "EXTRACT";
 
     if(status == 1){
       bloomText="";
@@ -158,10 +159,19 @@ void calculateLabels(void *param){
       else{
         targetText = String((char)('A' + profile));
         int seconds = brewSlotSeconds(profile);
+        int elapsed = brewProfileElapsed();
         char info[32];
-        snprintf(info, sizeof(info), "%02d:%02d %s", seconds / 60, seconds % 60,
-                 brewSlotMode(profile) == 3 ? "manual power" : "extraction");
+        if(elapsed >= 0){
+          // Replaying: progress of the saved brew.
+          if(elapsed > seconds) elapsed = seconds;
+          snprintf(info, sizeof(info), "%02d:%02d / %02d:%02d", elapsed / 60, elapsed % 60, seconds / 60, seconds % 60);
+        }
+        else{
+          snprintf(info, sizeof(info), "%02d:%02d %s", seconds / 60, seconds % 60,
+                   brewSlotMode(profile) == 3 ? "manual power" : "extraction");
+        }
         extraText = info;
+        if(brewProfileNeedsPreheat(profile)) extractText = "PREHEAT";
       }
     }
 
@@ -182,6 +192,7 @@ void calculateLabels(void *param){
     updateLabel(lastExtraText, extraText, setExtraInfo);
     updateLabel(lastBloomText, bloomText, setProWeigth);
     updateLabel(lastBrewText, brewText, setProTemp);
+    updateLabel(lastExtractText, extractText, setExtractButtonLabel);
     xSemaphoreGive(lvglMutex);
     initCycle = false;
   }

@@ -20,12 +20,13 @@ Doing the proper math is possible to keep the pot at a certain pressure. Since p
 ## Features
 List of features
 - Bloom. Based on boiling point (with an offset) is supposed to create enough pressure to soak the coffee bed but not enough to make it flow through the siphon completely.
-- Boiling point calibration (long press PREHEAT: takes the maximum temperature over 3 seconds), or set it from the settings page.
+- Boiling point calibration (long press PREHEAT: heats until the temperature stops rising, less than 0.5 °C in 3 seconds, and saves the highest reading), or set it from the settings page.
+- Preheat is limited to the boiling point plus a negative offset (-2 °C by default, set from the settings page), so the water does not boil before extracting.
 - Save preheat and target temperature (long press OFF).
 - Three modes, selected by swiping the main screen:
   - Extraction: PID controlled preheat, bloom and brew.
   - Manual power: the heater runs at a fixed 50-100% of the time window, and switches off automatically at the boiling point plus a configurable margin.
-  - Profiles: select one of the saved brews (A, B, C).
+  - Profiles: select one of the saved brews (A, B, C) and replay it: preheat to the temperature its recorded brew started at, then follow its saved target curve (or manual power percentage) for its duration.
 - Brew page (Chart.js) with temperature, pressure and target temperature, with customizable line colours. The brew history is recorded on the device, so the whole curve is shown even if the page is opened late.
 - Save finished brews in three slots (A, B, C) and delete them from the settings page.
 - Settings page to adjust details: PID values, fixed resistor and Steinhart-Hart coefficients of the thermistor, bloom time and offset, boiling temperature, manual power cut-off, °C/°F and decimals, screen colour.
@@ -88,8 +89,8 @@ TO DO instrucctions (Moka pot, WT32-SC01 base and Waveshare 3.5B base)
 
 **Buttons** (tap / long press)
 - **OFF**: switch off / save the current target temperature.
-- **PREHEAT**: preheat / calibrate the boiling point (maximum temperature over 3 seconds).
-- **EXTRACT**: on the extraction page start brewing (tap again to skip the bloom) / brew with a manual bloom phase. On the manual power page start manual power / save the percentage. Nothing on the profile page.
+- **PREHEAT**: preheat / calibrate the boiling point (from 5 °C below the theoretical boiling point at your altitude, heats until the water boils; OFF cancels it).
+- **EXTRACT**: on the extraction page start brewing (tap again to skip the bloom) / brew with a manual bloom phase. On the manual power page start manual power / save the percentage. On the profile page the button reads PREHEAT while the water is below the profile's preheat temperature (tap to preheat to it) and EXTRACT once it is reached (tap to replay the saved brew).
 - **+ / -**: target temperature, power percentage, or saved profile, depending on the page.
 - **IP**: connect or disconnect WiFi / forget the saved WiFi network.
 - **Colour (pencil, top right)**: change the button colour (tap outside the panel to cancel) / check for a firmware update.

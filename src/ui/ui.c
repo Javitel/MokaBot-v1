@@ -8,6 +8,7 @@
 #include "logic/webserver.hpp"
 #include "logic/pressureSensor.hpp"
 #include "logic/moka.hpp"
+#include "logic/brewHistory.hpp"
 #include "ui_helpers.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -106,6 +107,22 @@ static void short_preheat(void)    { preheatingOn(NULL); }
 static void short_boil(void)       { boilingOn(NULL); }
 // EXTRACT on the power page: relay at the page's percentage, no PID.
 static void short_manual_power(void) { manualPowerOn(ui_get_power_percent()); }
+// EXTRACT on the profile page (labelled PREHEAT while below the profile's
+// preheat target, see brewProfileNeedsPreheat): preheat to the saved target,
+// then replay the saved brew. Nothing while a brew is running.
+static void short_profile(void)
+{
+    int profile = ui_get_selected_profile();
+    int status = getMokaStatus();
+    if(profile < 0 || (status != 0 && status != 1)) return;
+    if(brewProfileNeedsPreheat(profile)) {
+        setTargetHeatingTemp(brewSlotPreheat(profile));
+        if(status == 0) setMokaStatus(1);
+    }
+    else {
+        brewProfileStart(profile);
+    }
+}
 static void short_wifi_toggle(void)
 {
     // While the provisioning portal runs, a tap cancels it.
@@ -143,8 +160,11 @@ void ui_event_Button2(lv_event_t * e)
 void ui_event_Button3(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
-    // EXTRACT does nothing on the profile page (selection only for now).
-    if(ui_profile_page()) return;
+    // Profile page: no long press.
+    if(ui_profile_page()) {
+        if(event_code == LV_EVENT_SHORT_CLICKED) short_profile();
+        return;
+    }
     if(event_code == LV_EVENT_LONG_PRESSED) {
         ui_note_long_press();
         if(ui_power_page()) {
@@ -172,7 +192,8 @@ void ui_event_Button4(lv_event_t * e)
     if(lv_event_get_code(e) == LV_EVENT_SHORT_CLICKED) {
         beep();
         if(ui_profile_page()) {
-            ui_select_profile(1);
+            // The selection only changes while OFF (not mid preheat or brew).
+            if(getMokaStatus() == 0) ui_select_profile(1);
         }
         else if(ui_power_page()) {
             ui_adjust_power_percent(1);
@@ -188,7 +209,7 @@ void ui_event_Button5(lv_event_t * e)
     if(lv_event_get_code(e) == LV_EVENT_SHORT_CLICKED) {
         beep();
         if(ui_profile_page()) {
-            ui_select_profile(-1);
+            if(getMokaStatus() == 0) ui_select_profile(-1);
         }
         else if(ui_power_page()) {
             ui_adjust_power_percent(-1);
@@ -271,6 +292,9 @@ void setCurrentIP(const char * text){
 
 void setProTemp(const char * text){
     lv_label_set_text(ui_ProTemp, text);
+}
+void setExtractButtonLabel(const char * text){
+    lv_label_set_text(ui_Label5, text);
 }
 void setProWeigth(const char * text){
     lv_label_set_text(ui_ProWeigth, text);

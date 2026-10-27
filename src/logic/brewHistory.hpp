@@ -23,6 +23,21 @@ float brewInternalPressure(void);
 bool brewSlotPresent(int index);
 int brewSlotSeconds(int index);   // duration of the saved brew
 int brewSlotMode(int index);      // 2 extraction, 3 manual power
+// Preheat temperature (C) of a saved brew: the temperature it started at
+// (its first recorded sample), NAN when that reading was not valid.
+float brewSlotPreheat(int index);
+
+// ---- Profile playback (EXTRACT on the profile page) ----
+// True while OFF or preheating below the profile's preheat temperature: the
+// button preheats first and becomes EXTRACT once it is reached.
+bool brewProfileNeedsPreheat(int index);
+// Replays a saved brew: an extraction follows its saved PID target second by
+// second, manual power runs at its saved percentage; both switch off at the
+// saved duration. False when the slot is empty/unreadable or the moka refused
+// to start (no valid temperature reading).
+bool brewProfileStart(int index);
+// Seconds since the running profile started, -1 when none is running.
+int brewProfileElapsed(void);
 
 #ifdef __cplusplus
 } // extern "C"

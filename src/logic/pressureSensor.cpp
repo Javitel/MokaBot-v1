@@ -173,19 +173,43 @@ void overrideBoiling(double input){
   preferences.putFloat("boilPointPres", boilingPointPressure);
   preferences.end(); prefsUnlock();
 }
-#define CALIBRATION_WINDOW_MS 3000
-#define CALIBRATION_SAMPLE_MS 100
-// Calibration only runs while preheating to at least this target, i.e. with
-// the water actually boiling.
-#define CALIBRATION_MIN_TARGET 100.0
-// A measured boiling point outside this range is rejected (sensor fault or
-// water not boiling) and the previous calibration is kept.
+// Calibration heats towards 110 C (past the preheat limit) and keeps the last
+// CALIBRATION_WINDOW_SAMPLES readings: once they are within
+// CALIBRATION_STABLE_RANGE the water is boiling and the highest one is saved.
+#define CALIBRATION_SAMPLE_MS      100
+#define CALIBRATION_WINDOW_SAMPLES 30     // 3 s
+#define CALIBRATION_STABLE_RANGE   0.5
+#define CALIBRATION_TIMEOUT_MS     (60UL * 1000)       // 1 min
+// Calibration starts this many degrees below the theoretical boiling point at
+// the altitude (from the ambient pressure); a plateau below that is not
+// boiling yet and heating continues. Without a valid pressure reading,
+// CALIBRATION_MIN_VALID is used instead.
+#define CALIBRATION_START_BELOW 5.0
 #define CALIBRATION_MIN_VALID  85.0
+// Above this the result is rejected (sensor fault).
 #define CALIBRATION_MAX_VALID  105.0
 // How long the calibration message stays on the screen's info line.
 #define CALIBRATION_MESSAGE_MS 4000
 
 static volatile bool calibrating = false;
+// Start temperature of the running calibration (see calibrationStartTemp()).
+static float calibrationMinTemp = CALIBRATION_MIN_VALID;
+
+// Theoretical boiling point of water (C) at an ambient pressure (bar), from
+// physics only (Clausius-Clapeyron from 100 C at 1 atm), so a wrong
+// calibration does not affect it. 0.578 bar (~4500 m) gives 85 C.
+static float theoreticalBoilingTemp(float bar){
+    return 1.0 / (1.0 / 373.15 - (8.3145 / 40700.0) * log(bar / 1.01325)) - 273.15;
+}
+
+// Lowest temperature calibration starts at: theoretical boiling point minus
+// CALIBRATION_START_BELOW (95 C at sea level, ~87.5 C at 2240 m).
+static float calibrationStartTemp(){
+    float bar = getCurrentPressure() / 100000;
+    // No BMP280 or an implausible reading (outside ~-800 to 5500 m).
+    if(isnan(bar) || bar < 0.5 || bar > 1.1) return CALIBRATION_MIN_VALID;
+    return theoreticalBoilingTemp(bar) - CALIBRATION_START_BELOW;
+}
 
 // Short message about the last calibration for the screen (see
 // calibrationMessage()); empty when there is nothing to show. The temperature
@@ -210,36 +234,63 @@ const char * calibrationMessage(float *temp){
     return calibrationText;
 }
 
-// Samples the temperature for CALIBRATION_WINDOW_MS and stores the maximum
-// (with the pressure read at that moment) as the boiling calibration point.
-static void calibrateBoilingTask(void *param){
-    float maxTemp = NAN;
-    float pressureAtMax = readPressure;
-    for(int elapsed = 0; elapsed < CALIBRATION_WINDOW_MS; elapsed += CALIBRATION_SAMPLE_MS){
-        float temp = getCurrentTemp();
-        // Skip disconnected/invalid readings.
-        if(!isnan(temp) && temp > -50.0 && (isnan(maxTemp) || temp > maxTemp)){
-            maxTemp = temp;
-            pressureAtMax = readPressure;
-        }
-        vTaskDelay(pdMS_TO_TICKS(CALIBRATION_SAMPLE_MS));
-    }
+static bool validReading(float temp){
+    return !isnan(temp) && temp > -50.0;
+}
 
-    if(isnan(maxTemp)){
-        setCalibrationMessage("Calibration: no reading", false);
+// Waits for the temperature to stop rising (see CALIBRATION_STABLE_RANGE)
+// and stores the highest reading of that window, with the pressure read at
+// that moment, as the boiling calibration point. Then preheat goes back to
+// its normal (limited) target.
+static void calibrateBoilingTask(void *param){
+    float window[CALIBRATION_WINDOW_SAMPLES];
+    int filled = 0, next = 0;
+    uint32_t start = millis();
+    float result = NAN;
+    const char *failure = NULL;
+    while(true){
+        vTaskDelay(pdMS_TO_TICKS(CALIBRATION_SAMPLE_MS));
+        // OFF, EXTRACT, over-temperature...: any status change cancels it.
+        if(!isCalibrationHeating()){ failure = "Calibration cancelled"; break; }
+        if(millis() - start > CALIBRATION_TIMEOUT_MS){ failure = "Calibration timed out"; break; }
+        float temp = getCurrentTemp();
+        if(!validReading(temp)){
+            // Lost reading: start the window over.
+            filled = 0;
+            next = 0;
+            continue;
+        }
+        if(temp > CALIBRATION_MAX_VALID){ result = temp; break; }
+        window[next] = temp;
+        next = (next + 1) % CALIBRATION_WINDOW_SAMPLES;
+        if(filled < CALIBRATION_WINDOW_SAMPLES) filled++;
+        if(filled < CALIBRATION_WINDOW_SAMPLES) continue;
+        float low = window[0], high = window[0];
+        for(int k = 1; k < CALIBRATION_WINDOW_SAMPLES; k++){
+            if(window[k] < low) low = window[k];
+            if(window[k] > high) high = window[k];
+        }
+        if(high - low < CALIBRATION_STABLE_RANGE && high >= calibrationMinTemp){
+            result = high;
+            break;
+        }
     }
-    else if(maxTemp < CALIBRATION_MIN_VALID || maxTemp > CALIBRATION_MAX_VALID){
+    calibrationHeatingOff();
+
+    if(failure){
+        setCalibrationMessage(failure, false);
+    }
+    else if(result > CALIBRATION_MAX_VALID){
         // Implausible boiling point: keep the previous calibration.
-        setCalibrationMessage("Rejected: ", false, maxTemp);
-        Serial.printf("Boiling calibration rejected: %.1f C outside %.0f-%.0f C\n",
-                      maxTemp, CALIBRATION_MIN_VALID, CALIBRATION_MAX_VALID);
+        setCalibrationMessage("Rejected: ", false, result);
+        Serial.printf("Boiling calibration rejected: %.1f C above %.0f C\n", result, CALIBRATION_MAX_VALID);
     }
     else{
-        setCalibrationMessage("Boiling: ", false, maxTemp);
+        setCalibrationMessage("Boiling: ", false, result);
         prefsLock(); preferences.begin("my-app", false);
-        boilingPoint = maxTemp;
+        boilingPoint = result;
         preferences.putFloat("boilingPoint", boilingPoint);
-        boilingPointPressure = pressureAtMax/100000;
+        boilingPointPressure = readPressure/100000;
         preferences.putFloat("boilPointPres", boilingPointPressure);
         preferences.end(); prefsUnlock();
     }
@@ -247,19 +298,34 @@ static void calibrateBoilingTask(void *param){
     vTaskDelete(NULL);
 }
 
-// Non-blocking: runs the sampling window in its own task so the caller (an
-// LVGL event) does not freeze the UI. Ignored while a calibration is running.
-// The conditions are checked here so no caller can skip them: preheat mode
-// with a target of at least CALIBRATION_MIN_TARGET (water boiling).
+// Non-blocking: heats and waits in its own task so the caller (an LVGL
+// event) does not freeze the UI. Ignored while a calibration is running.
+// Starts from OFF or preheat (switching to preheat), from
+// CALIBRATION_START_BELOW below the theoretical boiling point.
 void calibrateBoiling(){
     if(calibrating) return;
-    if(getMokaStatus() != 1 || getTargetHeatingTemp() < CALIBRATION_MIN_TARGET){
-        setCalibrationMessage("Needs preheat >=", false, CALIBRATION_MIN_TARGET);
+    int status = getMokaStatus();
+    if(status != 0 && status != 1){
+        setCalibrationMessage("Calibrate from OFF/preheat", false);
         return;
     }
+    float temp = getCurrentTemp();
+    if(!validReading(temp)){
+        setCalibrationMessage("Calibration: no reading", false);
+        return;
+    }
+    // Only near boiling, so the 1 min timeout is enough to reach it.
+    float startTemp = calibrationStartTemp();
+    if(temp < startTemp){
+        setCalibrationMessage("Calibrate at >=", false, startTemp);
+        return;
+    }
+    calibrationMinTemp = startTemp;
     calibrating = true;
+    calibrationHeatingOn();
     setCalibrationMessage("Calibrating...", true);
     if(xTaskCreate(calibrateBoilingTask, "calibrate", 3072, NULL, 5, NULL) != pdPASS){
+        calibrationHeatingOff();
         calibrating = false;
         setCalibrationMessage("Calibration failed", false);
     }
