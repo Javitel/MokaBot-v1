@@ -30,6 +30,14 @@ int getManualCutoff();
 // -2). Saved in Preferences.
 void setPreheatOffset(double degrees);
 double getPreheatOffset();
+// Profile extraction ends when, after reaching its target, the temperature
+// goes this far above it (water running low). 0.5..10 C, default 2. Saved in
+// Preferences.
+void setOvershootMargin(double degrees);
+double getOvershootMargin();
+// True while OFF after a profile brew ended by that overshoot (cleared by the
+// next status change).
+bool profileStoppedByOvershoot();
 // Highest preheat target: boiling point (current pressure) + preheat offset,
 // at most 110 C.
 float getHeatingLimit();

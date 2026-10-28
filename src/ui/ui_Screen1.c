@@ -465,6 +465,9 @@ static void color_open_event(lv_event_t * e)
 
 static lv_obj_t * ui_ScreenPower;
 static lv_obj_t * ui_ScreenProfile;
+// Profile page: target temperature and mode, where PREHEAT is on the extract
+// page (see setProfileStatusLabel).
+static lv_obj_t * ui_ProfileStatus;
 static volatile int currentPage = PAGE_EXTRACT;
 static volatile int powerPercent = POWER_PERCENT_MAX;
 static volatile int selectedProfile = -1;   // slot index, -1 = none
@@ -536,6 +539,11 @@ void ui_adjust_power_percent(int delta)
     powerPercent = value;
 }
 
+void setProfileStatusLabel(const char * text)
+{
+    lv_label_set_text(ui_ProfileStatus, text);
+}
+
 static lv_obj_t * page_screen(int page)
 {
     if(page == PAGE_POWER) return ui_ScreenPower;
@@ -560,6 +568,9 @@ static void switch_page(int direction, lv_scr_load_anim_t anim)
     // PREHEAT only on the extract page.
     if(page != PAGE_EXTRACT) lv_obj_add_flag(ui_Button2, LV_OBJ_FLAG_HIDDEN);
     else lv_obj_clear_flag(ui_Button2, LV_OBJ_FLAG_HIDDEN);
+    // In its place on the profile page: target and mode.
+    if(page != PAGE_PROFILE) lv_obj_add_flag(ui_ProfileStatus, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_clear_flag(ui_ProfileStatus, LV_OBJ_FLAG_HIDDEN);
     lv_scr_load_anim(to, anim, PAGE_SLIDE_MS, 0, false);
 }
 
@@ -780,6 +791,17 @@ void ui_Screen1_screen_init(void)
     lv_obj_set_align(ui_Label4, LV_ALIGN_CENTER);
     lv_label_set_text(ui_Label4, "PREHEAT");
     lv_obj_set_style_text_font(ui_Label4, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+
+    ui_ProfileStatus = lv_label_create(ui_Screen1);
+    lv_obj_set_width(ui_ProfileStatus, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_height(ui_ProfileStatus, LV_SIZE_CONTENT);    /// 1
+    lv_obj_set_x(ui_ProfileStatus, 0);
+    lv_obj_set_y(ui_ProfileStatus, 108);
+    lv_obj_set_align(ui_ProfileStatus, LV_ALIGN_CENTER);
+    lv_obj_set_style_text_align(ui_ProfileStatus, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_label_set_text(ui_ProfileStatus, "");
+    lv_obj_set_style_text_font(ui_ProfileStatus, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_add_flag(ui_ProfileStatus, LV_OBJ_FLAG_HIDDEN);
 
     ui_Button3 = lv_btn_create(ui_Screen1);
     lv_obj_set_width(ui_Button3, 100);

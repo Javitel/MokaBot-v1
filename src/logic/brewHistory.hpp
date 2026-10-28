@@ -29,7 +29,8 @@ float brewSlotPreheat(int index);
 
 // ---- Profile playback (EXTRACT on the profile page) ----
 // True while OFF or preheating below the profile's preheat temperature: the
-// button preheats first and becomes EXTRACT once it is reached.
+// button preheats first and becomes EXTRACT once it is reached, staying so
+// until the temperature drops 1 C below it.
 bool brewProfileNeedsPreheat(int index);
 // Replays a saved brew: an extraction follows its saved PID target second by
 // second, manual power runs at its saved percentage; both switch off at the
@@ -44,7 +45,8 @@ int brewProfileElapsed(void);
 
 #include <Arduino.h>
 // JSON for GET /brewHistory?session=S&from=N:
-// {"session":S,"mode":2|3,"active":true|false,"next":M,
+// {"session":S,"mode":2|3,"active":true|false,"status":N,
+//  "profile":"A"|"B"|"C"|null (saved brew this session replays),"next":M,
 //  "samples":[[seconds,tempC|null,pressureBar|null,targetC|null],...]}
 // Pressure and target are recorded for extractions only (null in manual
 // power, which has no PID).
@@ -70,4 +72,8 @@ BrewSlotResult brewHistorySaveSlot(char slot);
 BrewSlotResult brewHistoryDeleteSlot(char slot);
 // {"A":{"samples":n,"seconds":s,"mode":2|3}|null,"B":...,"C":...}
 String brewSlotsJson();
+// Samples of the brew saved in slot 'A', 'B' or 'C', for GET /brewSlot:
+// {"slot":"A","mode":2|3,"samples":[...]} (same sample format as
+// brewHistoryJson). "" when the slot is empty or unreadable.
+String brewSlotJson(char slot);
 #endif

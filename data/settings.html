@@ -55,7 +55,10 @@
       <input type="number" id="BloomOffset" name="BloomOffset" placeholder="0" step="1" min="-15" max="15"><br>
       <label for="PreheatOffset">Preheat limit, boiling point + (&deg;C):</label>
       <input type="number" id="PreheatOffset" name="PreheatOffset" placeholder="-2" step="0.5" min="-10" max="0"><br>
-      <small>From -10 to 0: preheat never goes above the boiling point plus this value.</small>
+      <small>From -10 to 0: preheat never goes above the boiling point plus this value.</small><br>
+      <label for="OvershootMargin">Profile overshoot stop (<span id="overshootUnit">&deg;C</span> above target):</label>
+      <input type="number" id="OvershootMargin" name="OvershootMargin" placeholder="2" step="0.1" min="0.5" max="10"><br>
+      <small>A replayed profile ends when, after reaching its target, the temperature goes this far above it (water running low).</small>
     </fieldset>
 
     <fieldset>
@@ -155,12 +158,35 @@
             if (el) el.value = values[id] === null ? "" : values[id];
           });
           syncCheckboxesFromValues();
+          // The margin arrives in Celsius.
+          overshootFahrenheit = false;
+          showOvershootUnit(values.Fahrenheit === 1);
           if (values.ButtonColor) {
             setColor(values.ButtonColor);
             colorInput.disabled = false;
           }
         })
         .catch(console.error);
+    }
+
+    // ---- Overshoot margin: stored in Celsius, shown in the screen's unit. It
+    // is a temperature difference: x 9/5 for Fahrenheit, without the +32.
+    var overshootField = document.getElementById("OvershootMargin");
+    var overshootFahrenheit = false;   // unit the field shows now
+
+    function round1(v) { return Math.round(v * 10) / 10; }
+
+    function showOvershootUnit(fahrenheit) {
+      if (fahrenheit === overshootFahrenheit) return;
+      if (overshootField.value !== "") {
+        var v = parseFloat(overshootField.value);
+        overshootField.value = round1(fahrenheit ? v * 9 / 5 : v * 5 / 9);
+      }
+      overshootFahrenheit = fahrenheit;
+      document.getElementById("overshootUnit").innerHTML = fahrenheit ? "&deg;F" : "&deg;C";
+      overshootField.min = fahrenheit ? 0.9 : 0.5;
+      overshootField.max = fahrenheit ? 18 : 10;
+      overshootField.placeholder = fahrenheit ? "3.6" : "2";
     }
 
     // ---- Button colour editor: wheel + sliders, hex, RGB and presets kept in sync.
@@ -311,6 +337,7 @@
     checkboxes.forEach(function (box) {
       box.addEventListener("change", function () {
         document.getElementById(box.dataset.target).value = box.checked ? "1" : "0";
+        if (box.dataset.target === "Fahrenheit") showOvershootUnit(box.checked);
       });
     });
 
@@ -321,7 +348,11 @@
       event.preventDefault();
       var params = new URLSearchParams();
       this.querySelectorAll("[name]").forEach(function (el) {
-        if (!el.disabled && el.value !== "") params.append(el.name, el.value);
+        if (el.disabled || el.value === "") return;
+        var value = el.value;
+        // The device stores the margin in Celsius.
+        if (el === overshootField && overshootFahrenheit) value = String(Math.round(parseFloat(value) * 5 / 9 * 100) / 100);
+        params.append(el.name, value);
       });
 
       var status = document.getElementById("saveStatus");

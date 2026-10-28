@@ -55,6 +55,20 @@ double preheatOffset = -2;
 #define PREHEAT_OFFSET_MIN -10.0
 #define PREHEAT_OFFSET_MAX 0.0
 
+// Profile extraction: once the target has been reached (targetReached), a
+// temperature more than this above it means the boiler is running low on
+// water (less water, the PID overshoots) and the brew ends. Saved in
+// Preferences, set from the settings page.
+double overshootMargin = 2;
+#define OVERSHOOT_MARGIN_MIN 0.5
+#define OVERSHOOT_MARGIN_MAX 10.0
+
+static double clampOvershootMargin(double degrees){
+  if(degrees < OVERSHOOT_MARGIN_MIN) return OVERSHOOT_MARGIN_MIN;
+  if(degrees > OVERSHOOT_MARGIN_MAX) return OVERSHOOT_MARGIN_MAX;
+  return degrees;
+}
+
 static double clampPreheatOffset(double degrees){
   if(degrees < PREHEAT_OFFSET_MIN) return PREHEAT_OFFSET_MIN;
   if(degrees > PREHEAT_OFFSET_MAX) return PREHEAT_OFFSET_MAX;
@@ -87,12 +101,12 @@ double current = 0.0;
 int mokaStatus = 0;
 bool connected=false;
 
-double defaultp = 40.2;//0.03 0.003;
+double defaultp = 10.2;//0.03 0.003;
 // I setting: integral gain per degree of (target - room temperature); the
 // PID's Ki is scheduled as i * delta (see estimateIntegral). ~0.7 was measured
 // stable at a delta of ~70 C, hence 0.01.
-double defaulti = 0.01;
-double defaultd = 0.085;//0.000002;
+double defaulti = 0.006;
+double defaultd = 0.85;//0.000002;
 
 double p, i, d;  
 
@@ -114,6 +128,10 @@ static volatile bool calibrationHeating = false;
 // profileTarget instead of the bloom and boiling targets.
 static volatile bool profileBrew = false;
 static volatile double profileTarget = 0;
+// Overshoot check of a profile brew (see checkProfileOvershoot).
+static bool targetReached = false;
+static double reachedTarget = NAN;               // target targetReached refers to
+static volatile bool overshootStopped = false;   // last profile brew ended by it
 
 int getrelayStatus(int status){
   if (status == LOW){
@@ -226,6 +244,7 @@ void recoverBrewSettings(){
   // Clamped: a value saved before the limits existed may be out of range.
   manualCutoffAboveBoiling = clampManualCutoff(MokaPreferences.getInt("cutoffAbove", manualCutoffAboveBoiling));
   preheatOffset = clampPreheatOffset(MokaPreferences.getFloat("preheatOffset", preheatOffset));
+  overshootMargin = clampOvershootMargin(MokaPreferences.getFloat("overshoot", overshootMargin));
 
 }
 
@@ -272,9 +291,31 @@ static float currentBoilingPoint(){
   return getCalibratedTemp();
 }
 
+// Whole degrees (floored), like the targets set with +/-.
 float getHeatingLimit(){
-  float limit = currentBoilingPoint() + preheatOffset;
+  float limit = floorf(currentBoilingPoint() + preheatOffset);
   return limit < MAX_HEATING_TARGET ? limit : MAX_HEATING_TARGET;
+}
+
+// Profile brew: targetReached is set once the temperature gets to the target
+// (from below, into target..target + overshootMargin); after that, going
+// above target + overshootMargin ends the brew. A new target (bloom -> boil,
+// a step of the saved curve) has to be reached again; after a step down
+// that means cooling into the band first.
+static void checkProfileOvershoot(){
+  if(target != reachedTarget){
+    targetReached = false;
+    reachedTarget = target;
+  }
+  if(!targetReached){
+    if(current >= target && current <= target + overshootMargin) targetReached = true;
+  }
+  else if(current > target + overshootMargin){
+    Serial.printf("Profile overshoot (%.1f C > %.1f + %.1f C): low water, ending the brew\n",
+                  current, target, overshootMargin);
+    setMokaStatus(0);
+    overshootStopped = true;
+  }
 }
 
 // Defined with the other manual power functions below.
@@ -320,6 +361,7 @@ BaseType_t xWasDelayed;
       connected=true;
         if(!running){
     pidUpdate();
+    if(getMokaStatus() == 2 && profileBrew) checkProfileOvershoot();
     if(getMokaStatus() == 2 && brewstart == false && (current) >= getCalibratedTemp()+ bloomOffset){
       brewstart = true;
       startTime = millis() - elapsedTime;
@@ -426,6 +468,21 @@ void setPreheatOffset(double degrees){
 
 double getPreheatOffset(){
   return preheatOffset;
+}
+
+void setOvershootMargin(double degrees){
+    prefsLock(); MokaPreferences.begin("my-app", false);
+    overshootMargin = clampOvershootMargin(degrees);
+    MokaPreferences.putFloat("overshoot", overshootMargin);
+    MokaPreferences.end(); prefsUnlock();
+}
+
+double getOvershootMargin(){
+  return overshootMargin;
+}
+
+bool profileStoppedByOvershoot(){
+  return overshootStopped;
 }
 
 void calibrationHeatingOn(){
@@ -543,55 +600,85 @@ static void manualPowerUpdate(){
 #define NTC_MAX_FAILED_READS 5
 static int failedNtcReads = 0;
 
-void updateTempNTC(){
-  // Read both channels first; if either failed (NAN), keep the previous
-  // temperature instead of computing one from bad data.
+// A reading this far (C) from the current temperature is a sudden change:
+// it is read again and only accepted if the new reading confirms it.
+#define NTC_JUMP_CONFIRM 3.0
+
+#define NTC_READ_OK           0
+#define NTC_READ_FAILED       1   // I2C error, keep the previous temperature
+#define NTC_READ_DISCONNECTED 2   // divider open or shorted
+
+// One NTC reading: temperature (C) and the raw ADC value it came from.
+static int readNtc(double *tempOut, double *ntcReadOut){
+  // Read both channels first; if either failed (NAN), no temperature is
+  // computed from bad data.
   double refRead = averageADSRead(3,5, 25, refVoltage);//ads.readADC_Differential_1_3();//
   double ntcRead = averageADSRead(0,10, 100, ntcValue);//ads.readADC_Differential_0_3();//
-  if(isnan(refRead) || isnan(ntcRead)){
+  if(isnan(refRead) || isnan(ntcRead)) return NTC_READ_FAILED;
+  refVoltage = refRead;
+  //refVoltage= refVoltage * 0.1875/1000;  f
+  refVoltage = ads.toVoltage(1)*refVoltage;
+
+double resistance;
+ double kelvin;
+ double vm = 0.0;
+ double aux = 0;
+vm = ads.toVoltage(1)*ntcRead;
+  // NTC divider open or shorted (0 V or at the reference): no temperature can
+  // be computed.
+  if(vm <= 0 || vm >= refVoltage) return NTC_READ_DISCONNECTED;
+resistance = (refVoltage - vm)*(resistorFixed/vm);
+aux = shA + (shB * log(resistance)) + (shC * pow(log(resistance), 3));
+kelvin =1.0/aux;
+  *tempOut = kelvin - 273.15;
+  *ntcReadOut = ntcRead;
+  return NTC_READ_OK;
+}
+
+void updateTempNTC(){
+  double rawTemp, ntcRead;
+  int result = readNtc(&rawTemp, &ntcRead);
+  if(result == NTC_READ_FAILED){
     if(++failedNtcReads >= NTC_MAX_FAILED_READS){
       current = -127.0f;
     }
     return;
   }
   failedNtcReads = 0;
-  refVoltage = refRead;
-  //refVoltage= refVoltage * 0.1875/1000;  f
-  refVoltage = ads.toVoltage(1)*refVoltage;
-
-double resistance;
- double lnR;
- double kelvin;
- double vm = 0.0;
- double aux = 0;
-vm = ads.toVoltage(1)*ntcRead;
-  // NTC divider open or shorted (0 V or at the reference): no temperature can
-  // be computed, report disconnected right away instead of NAN. ntcValue is
-  // reset so the outlier filter does not compare against this reading.
-  if(vm <= 0 || vm >= refVoltage){
+  if(result == NTC_READ_DISCONNECTED){
+    // Reported right away instead of NAN. ntcValue is reset so the outlier
+    // filter does not compare against this reading.
     ntcValue = 0;
     current = -127.0f;
     return;
   }
+  // Sudden change from a valid temperature: read again and accept it only if
+  // the second reading agrees with the first; otherwise it was a glitch and
+  // the current temperature is kept (the next cycle reads again).
+  if(current > 0 && fabs(rawTemp - current) > NTC_JUMP_CONFIRM){
+    double confirmTemp, confirmRead;
+    if(readNtc(&confirmTemp, &confirmRead) != NTC_READ_OK ||
+       fabs(confirmTemp - rawTemp) > NTC_JUMP_CONFIRM){
+      Serial.printf("Temperature jump not confirmed: %.1f -> %.1f C, kept %.1f C\n",
+                    current, rawTemp, current);
+      return;
+    }
+    rawTemp = confirmTemp;
+    ntcRead = confirmRead;
+  }
   ntcValue = ntcRead;
-resistance = (refVoltage - vm)*(resistorFixed/vm);
-aux = shA + (shB * log(resistance)) + (shC * pow(log(resistance), 3));
-kelvin =1.0/aux;
-  double rawTemp = kelvin - 273.15;
   // Low-pass filter against the previous valid reading (current): changes
-  // under 2 C are blended 75/25 to reduce noise, larger jumps pass straight
-  // through. Without a valid previous reading (start-up, after a disconnect)
-  // the raw value is used.
+  // under 2 C are blended 75/25 to reduce noise, larger (confirmed) jumps pass
+  // straight through. Without a valid previous reading (start-up, after a
+  // disconnect) the raw value is used.
   double temp = rawTemp;
   if(current > 0 && fabs(rawTemp - current) < 2){
     temp = (rawTemp * 0.75) + (current * 0.25);
   }
 
   Serial.println(temp);
-  // Serial.println("end");
-  if(temp>0){ 
+  if(temp>0){
       current=(temp);
-    //}
   }
   else{current = -127.0f; }
 
@@ -612,6 +699,9 @@ void setMokaStatus(int status){
   // and calibrationHeatingOn set them again).
   profileBrew = false;
   calibrationHeating = false;
+  targetReached = false;
+  reachedTarget = NAN;
+  overshootStopped = false;
   if(status == 1 || status == 0 || status == 3){
     brewstart = false;
     bloomfinished = false;
@@ -645,7 +735,10 @@ void setTargetBoilingTemp(float temp){
   boil = temp > MAX_BOILING_TARGET ? MAX_BOILING_TARGET : temp;
   changePending = true;
   }
+// Whole degrees (floored): a profile's preheat temperature is a recorded
+// reading such as 93.4 C.
 void setTargetHeatingTemp(float temp){
+  temp = floorf(temp);
   heat = temp > MAX_HEATING_TARGET ? MAX_HEATING_TARGET : temp;
   changePending = true;
   }

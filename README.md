@@ -26,8 +26,8 @@ List of features
 - Three modes, selected by swiping the main screen:
   - Extraction: PID controlled preheat, bloom and brew.
   - Manual power: the heater runs at a fixed 50-100% of the time window, and switches off automatically at the boiling point plus a configurable margin.
-  - Profiles: select one of the saved brews (A, B, C) and replay it: preheat to the temperature its recorded brew started at, then follow its saved target curve (or manual power percentage) for its duration.
-- Brew page (Chart.js) with temperature, pressure and target temperature, with customizable line colours. The brew history is recorded on the device, so the whole curve is shown even if the page is opened late.
+  - Profiles: select one of the saved brews (A, B, C) and replay it: preheat to the temperature its recorded brew started at, then follow its saved target curve (or manual power percentage) for its duration. A replayed extraction also ends early if, after reaching its target, the temperature overshoots it by more than a margin (2 °C by default, set from the settings page): the boiler is running low on water.
+- Brew page (Chart.js) with temperature, pressure and target temperature, with customizable line colours. The brew history is recorded on the device, so the whole curve is shown even if the page is opened late. When a saved profile is replayed, its recorded curves are drawn underneath as dotted, half-transparent lines of the same colours.
 - Save finished brews in three slots (A, B, C) and delete them from the settings page.
 - Settings page to adjust details: PID values, fixed resistor and Steinhart-Hart coefficients of the thermistor, bloom time and offset, boiling temperature, manual power cut-off, °C/°F and decimals, screen colour.
 - Firmware updates over the air: from a URL (version check, confirmation, reinstall) or uploading the .bin from the settings page.

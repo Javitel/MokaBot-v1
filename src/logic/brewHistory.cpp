@@ -26,6 +26,7 @@ static int sessionMode = 0;      // 2 or 3 (0 before the first session)
 static bool sessionActive = false;
 static uint32_t sessionStartMs = 0;
 static uint8_t sessionPower = 0;                 // manual power percentage
+static int sessionProfile = -1;                  // slot index the session replays, -1 = none
 static SemaphoreHandle_t historyMutex = NULL;
 
 // ---- Saved brew slots ----
@@ -67,6 +68,7 @@ static int playMode = 0;
 static int playSeconds = 0;          // saved duration
 static int16_t *playTargets = NULL;  // target per second (0.1 C), extractions only
 static uint32_t playStartMs = 0;
+static int playSlot = -1;            // slot index being replayed
 
 static void stopPlayback(){
   playing = false;
@@ -137,6 +139,8 @@ static void historyTask(void *param){
       sessionStartMs = millis();
       // Saved with the brew, for replaying it as a profile.
       sessionPower = (uint8_t)getManualPower();
+      // The brew page draws the replayed profile under this session.
+      sessionProfile = playing ? playSlot : -1;
     }
     sessionActive = recording;
     if(recording) recordSample(status);
@@ -294,8 +298,15 @@ int brewSlotMode(int index){
 
 float brewSlotPreheat(int index){
   if(!brewSlotPresent(index) || slotInfo[index].preheatDeci == INT16_MIN) return NAN;
-  return slotInfo[index].preheatDeci / 10.0;
+  // Whole degrees, as the preheat target it is applied as.
+  return floorf(slotInfo[index].preheatDeci / 10.0);
 }
+
+// Once a profile's preheat temperature is reached, the button stays EXTRACT
+// until the temperature drops this far below it: the PID hovers around the
+// target, which made the button flip between PREHEAT and EXTRACT.
+#define PROFILE_PREHEAT_HYSTERESIS 1.0
+static volatile int preheatReachedProfile = -1;   // slot index, -1 = none
 
 bool brewProfileNeedsPreheat(int index){
   int status = getMokaStatus();
@@ -305,7 +316,20 @@ bool brewProfileNeedsPreheat(int index){
   // Preheat cannot go above its limit: EXTRACT once that is reached.
   if(preheat > getHeatingLimit()) preheat = getHeatingLimit();
   float temp = getCurrentTemp();
-  return isnan(temp) || temp < preheat;
+  if(isnan(temp) || temp <= -127.0){
+    preheatReachedProfile = -1;
+    return true;
+  }
+  if(preheatReachedProfile == index){
+    if(temp >= preheat - PROFILE_PREHEAT_HYSTERESIS) return false;
+    preheatReachedProfile = -1;
+    return true;
+  }
+  if(temp >= preheat){
+    preheatReachedProfile = index;
+    return false;
+  }
+  return true;
 }
 
 // Reads the saved PID target of every second of an extraction slot into a
@@ -362,6 +386,7 @@ bool brewProfileStart(int index){
   playSeconds = seconds;
   playTargets = targets;
   playStartMs = millis();
+  playSlot = index;
   playing = true;
   if(mode == STATUS_BREWING){
     profileBrewOn(targets[0] / 10.0);
@@ -414,6 +439,51 @@ String brewSlotsJson(){
   return json;
 }
 
+// [seconds,tempC|null,pressureBar|null,targetC|null]
+static void appendSampleJson(String &json, const BrewSample &s){
+  json += '[';
+  json += s.seconds;
+  json += ',';
+  if(s.tempDeci == INT16_MIN) json += "null";
+  else json += String(s.tempDeci / 10.0, 1);
+  json += ',';
+  if(s.pressureMbar == 0) json += "null";
+  else json += String(s.pressureMbar / 1000.0, 3);
+  json += ',';
+  if(s.targetDeci == INT16_MIN) json += "null";
+  else json += String(s.targetDeci / 10.0, 1);
+  json += ']';
+}
+
+String brewSlotJson(char slot){
+  slot = toupper((unsigned char)slot);
+  if(slot < BREW_SLOT_FIRST || slot > BREW_SLOT_LAST) return "";
+  char path[16];
+  slotPath(slot, path, sizeof(path));
+  if(!ensureSlotsFs() || !SPIFFS.exists(path)) return "";
+  File file = SPIFFS.open(path, FILE_READ);
+  if(!file) return "";
+  String json;
+  SlotHeader header;
+  if(readHeader(file, &header)){
+    json.reserve(48 + header.count * 28);
+    json += "{\"slot\":\"";
+    json += slot;
+    json += "\",\"mode\":";
+    json += header.mode;
+    json += ",\"samples\":[";
+    BrewSample sample;
+    for(uint16_t k = 0; k < header.count; k++){
+      if(file.read((uint8_t *)&sample, sizeof(sample)) != sizeof(sample)) break;
+      if(k > 0) json += ',';
+      appendSampleJson(json, sample);
+    }
+    json += "]}";
+  }
+  file.close();
+  return json;
+}
+
 String brewHistoryJson(long session, long from){
   if(historyMutex == NULL) return "{\"session\":0,\"mode\":0,\"active\":false,\"next\":0,\"samples\":[]}";
   xSemaphoreTake(historyMutex, portMAX_DELAY);
@@ -432,24 +502,20 @@ String brewHistoryJson(long session, long from){
   json += sessionActive ? "true" : "false";
   json += ",\"status\":";
   json += getMokaStatus();
+  json += ",\"profile\":";
+  if(sessionProfile < 0) json += "null";
+  else{
+    json += '"';
+    json += (char)(BREW_SLOT_FIRST + sessionProfile);
+    json += '"';
+  }
   json += ",\"next\":";
   json += totalSamples;
   json += ",\"samples\":[";
   for(long i = from; i < totalSamples; i++){
     const BrewSample &s = samples[i % BREW_HISTORY_CAPACITY];
     if(i > from) json += ',';
-    json += '[';
-    json += s.seconds;
-    json += ',';
-    if(s.tempDeci == INT16_MIN) json += "null";
-    else json += String(s.tempDeci / 10.0, 1);
-    json += ',';
-    if(s.pressureMbar == 0) json += "null";
-    else json += String(s.pressureMbar / 1000.0, 3);
-    json += ',';
-    if(s.targetDeci == INT16_MIN) json += "null";
-    else json += String(s.targetDeci / 10.0, 1);
-    json += ']';
+    appendSampleJson(json, s);
   }
   json += "]}";
 

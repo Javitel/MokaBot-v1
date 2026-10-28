@@ -102,7 +102,7 @@ String formatTemp(float celsius, const char *prefix){
 
 void calculateLabels(void *param){
   initCycle = true;
-  String lastIp, lastTempText, lastPressureText, lastTargetText, lastExtraText, lastBloomText, lastBrewText, lastExtractText;
+  String lastIp, lastTempText, lastPressureText, lastTargetText, lastExtraText, lastBloomText, lastBrewText, lastExtractText, lastProfileStatusText;
   while(true){
     vTaskDelay( pdMS_TO_TICKS( 50 ));
     currentPressure = getCurrentPressure();
@@ -117,6 +117,7 @@ void calculateLabels(void *param){
     String pressureText = prepareLabel(currentPressure/100000, 3, "bar");
     String targetText, extraText, bloomText, brewText;
     String extractText = "EXTRACT";
+    String profileStatusText;
 
     if(status == 1){
       bloomText="";
@@ -171,6 +172,18 @@ void calculateLabels(void *param){
                    brewSlotMode(profile) == 3 ? "manual power" : "extraction");
         }
         extraText = info;
+        // Under the target letter, where PREHEAT is on the extract page:
+        // target temperature and mode. While OFF, the preheat temperature
+        // the profile will start from.
+        if(status == 1) profileStatusText = formatTemp(getTargetHeatingTemp(), "") + "\npreheating";
+        else if(status == 2) profileStatusText = formatTemp(getPidTarget(), "") + "\nextracting";
+        else if(status == 3) profileStatusText = String(getManualPower()) + "%\nmanual power";
+        else{
+          float preheat = brewSlotPreheat(profile);
+          profileStatusText = (isnan(preheat) ? String("--") : formatTemp(preheat, "")) + "\noff";
+        }
+        // Ended early: the boiler ran low on water.
+        if(status == 0 && profileStoppedByOvershoot()) extraText = "Ended: overshoot";
         if(brewProfileNeedsPreheat(profile)) extractText = "PREHEAT";
       }
     }
@@ -193,6 +206,7 @@ void calculateLabels(void *param){
     updateLabel(lastBloomText, bloomText, setProWeigth);
     updateLabel(lastBrewText, brewText, setProTemp);
     updateLabel(lastExtractText, extractText, setExtractButtonLabel);
+    updateLabel(lastProfileStatusText, profileStatusText, setProfileStatusLabel);
     xSemaphoreGive(lvglMutex);
     initCycle = false;
   }

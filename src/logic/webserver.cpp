@@ -99,6 +99,8 @@ String retrieveSettings(){
   appendJson(json, "BloomOffset", getBloomOffset());
   appendJson(json, "ManualCutoff", getManualCutoff(), 0);
   appendJson(json, "PreheatOffset", getPreheatOffset());
+  // Celsius; the page shows it in Fahrenheit when the screen uses it.
+  appendJson(json, "OvershootMargin", getOvershootMargin());
   appendJson(json, "Fahrenheit", ui_use_fahrenheit() ? 1 : 0, 0);
   appendJson(json, "Decimals", ui_show_decimals() ? 1 : 0, 0);
   char hex[32];
@@ -295,6 +297,13 @@ void handleBrewDelete() {
 void sendBrewSlots() {
   server->send(200, "application/json", brewSlotsJson());
 }
+// GET /brewSlot?slot=A|B|C: the samples of the brew saved in that slot.
+void sendBrewSlot() {
+  String slot = server->arg("slot");
+  String json = slot.length() == 1 ? brewSlotJson(slot[0]) : String();
+  if(json.length() == 0) server->send(404, "text/plain", "Empty slot");
+  else server->send(200, "application/json", json);
+}
 void sendBrewData() {
   server->send(200, "application/json", retrieveExtractionData());
 }
@@ -356,6 +365,8 @@ void handleUpdate() {
   if (readArg("BloomOffset", -20.0, value)) setBloomOffset(value);
   // Clamped to -10..0 by setPreheatOffset().
   if (readArg("PreheatOffset", -1e9, value)) setPreheatOffset(value);
+  // Celsius (converted by the page); clamped to 0.5..10 by setOvershootMargin().
+  if (readArg("OvershootMargin", 0.0, value)) setOvershootMargin(value);
   // Any integer, negative or positive.
   if (readArg("ManualCutoff", -1e9, value)) setManualCutoff((int)lround(value));
 
@@ -432,6 +443,7 @@ void serverStart(){
   server->on("/brewSave", HTTP_POST, handleBrewSave);
   server->on("/brewDelete", HTTP_POST, handleBrewDelete);
   server->on("/brewSlots", HTTP_GET, sendBrewSlots);
+  server->on("/brewSlot", HTTP_GET, sendBrewSlot);
   server->on("/settingsInfo", HTTP_GET, sendSettingsValues);
   server->on("/settings", HTTP_GET, sendSettings);
   server->on("/set", HTTP_GET, handleUpdate);
