@@ -1,0 +1,111 @@
+<!DOCTYPE HTML>
+<html>
+<head>
+  <title>MokaBot Installer</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- ESP Web Tools: Web Serial flashing (esptool-js) with chip detection.
+       It picks the build for the connected chip from build/manifest.json,
+       which `pio run` writes (see ota-images.py). -->
+  <script type="module" src="https://unpkg.com/esp-web-tools@10.0.1/dist/web/install-button.js?module"></script>
+  <style>
+    body {
+      min-width: 310px;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 0 16px;
+      font-family: Arial, sans-serif;
+      line-height: 1.4;
+    }
+    h2 {
+      font-size: 2.5rem;
+      text-align: center;
+      margin-bottom: 0;
+    }
+    #version {
+      text-align: center;
+      color: #555;
+      margin-top: 4px;
+    }
+    fieldset {
+      margin: 16px 0;
+    }
+    .install {
+      text-align: center;
+      margin: 12px 0;
+    }
+    .warning {
+      color: #b00020;
+    }
+    li {
+      margin: 4px 0;
+    }
+  </style>
+</head>
+<body>
+  <h2>MokaBot</h2>
+  <p id="version">Firmware installer</p>
+
+  <fieldset>
+    <legend>Supported boards</legend>
+    <ul>
+      <li>WT32-SC01 (<strong>not</strong> the WT32-SC01 Plus)</li>
+      <li>Waveshare ESP32-S3-Touch-LCD-3.5B</li>
+    </ul>
+    The board is detected when it connects; the matching firmware is installed.
+  </fieldset>
+
+  <fieldset>
+    <legend>Install</legend>
+    <ol>
+      <li>Connect the board to this computer with a USB data cable.</li>
+      <li>Press the button and choose the board's serial port.</li>
+      <li>When asked whether to erase the device: <strong>erase</strong> on a
+        new board; <strong>don't erase</strong> to update a MokaBot and keep its
+        WiFi, settings, calibration and saved brews.</li>
+    </ol>
+    <div class="install">
+      <!-- manifest set by the script below, with a cache-busting query. -->
+      <esp-web-install-button id="installButton">
+        <span slot="unsupported" class="warning">
+          This browser cannot flash boards: use Chrome, Edge or Opera on a computer.
+        </span>
+        <span slot="not-allowed" class="warning">
+          Flashing needs a secure page: open it over https:// (or from localhost).
+        </span>
+      </esp-web-install-button>
+    </div>
+  </fieldset>
+
+  <fieldset>
+    <legend>Not connecting?</legend>
+    <ul>
+      <li>Try another cable: some USB cables only charge.</li>
+      <li>WT32-SC01 on Windows: install the USB serial driver (CP210x or CH340,
+        depending on the board) if no port appears.</li>
+      <li>Put the board in download mode: hold <strong>BOOT</strong>, press and
+        release <strong>RESET</strong>, release <strong>BOOT</strong>, then press
+        the button again.</li>
+      <li>Close any serial monitor (PlatformIO, Arduino IDE) using the port.</li>
+    </ul>
+  </fieldset>
+
+  <p>Already running MokaBot? It can also update over WiFi: long press the
+    colour button on the screen, or upload the .bin from the settings page.</p>
+
+  <script>
+    // A fresh query on every visit, so the browser never reuses a cached
+    // manifest (its part paths carry a hash of each image for the same reason).
+    var manifestUrl = "build/manifest.json?t=" + Date.now();
+    document.getElementById("installButton").manifest = manifestUrl;
+
+    // Shows the firmware version from the manifest under the title.
+    fetch(manifestUrl, { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+      .then(function (manifest) {
+        document.getElementById("version").textContent = "Firmware installer · version " + manifest.version;
+      })
+      .catch(console.error);
+  </script>
+</body>
+</html>

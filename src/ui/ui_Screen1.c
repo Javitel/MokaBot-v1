@@ -539,6 +539,30 @@ void ui_adjust_power_percent(int delta)
     powerPercent = value;
 }
 
+// ---- Bluetooth indicator ------------------------------------------------------
+// Blue 5x5 px square in the top right corner while a phone is connected over
+// Bluetooth. On the top layer, so it stays visible on every page and screen.
+#define BLE_INDICATOR_SIZE  5
+#define BLE_INDICATOR_COLOR 0x0060ff
+
+static lv_obj_t * ui_BleIndicator;
+
+void ui_set_ble_indicator(bool visible)
+{
+    if(ui_BleIndicator == NULL) {
+        if(!visible) return;
+        ui_BleIndicator = lv_obj_create(lv_layer_top());
+        lv_obj_remove_style_all(ui_BleIndicator);
+        lv_obj_set_size(ui_BleIndicator, BLE_INDICATOR_SIZE, BLE_INDICATOR_SIZE);
+        lv_obj_align(ui_BleIndicator, LV_ALIGN_TOP_RIGHT, 0, 0);
+        lv_obj_set_style_bg_color(ui_BleIndicator, lv_color_hex(BLE_INDICATOR_COLOR), LV_PART_MAIN);
+        lv_obj_set_style_bg_opa(ui_BleIndicator, LV_OPA_COVER, LV_PART_MAIN);
+        lv_obj_clear_flag(ui_BleIndicator, LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE);
+    }
+    if(visible) lv_obj_clear_flag(ui_BleIndicator, LV_OBJ_FLAG_HIDDEN);
+    else lv_obj_add_flag(ui_BleIndicator, LV_OBJ_FLAG_HIDDEN);
+}
+
 void setProfileStatusLabel(const char * text)
 {
     lv_label_set_text(ui_ProfileStatus, text);

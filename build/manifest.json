@@ -1,0 +1,49 @@
+{
+  "name": "MokaBot",
+  "version": "1.0.1",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        {
+          "path": "wt32-sc01/bootloader.bin?v=1294edb6fcd0",
+          "offset": 4096
+        },
+        {
+          "path": "wt32-sc01/partitions.bin?v=0a8b5720e7b7",
+          "offset": 32768
+        },
+        {
+          "path": "wt32-sc01/boot_app0.bin?v=f94c5d786a7a",
+          "offset": 57344
+        },
+        {
+          "path": "wt32-sc01.bin?v=c6e7d4eb4d1b",
+          "offset": 65536
+        }
+      ]
+    },
+    {
+      "chipFamily": "ESP32-S3",
+      "parts": [
+        {
+          "path": "waveshare-s3-touch-lcd-3.5b/bootloader.bin?v=62965f3a6415",
+          "offset": 0
+        },
+        {
+          "path": "waveshare-s3-touch-lcd-3.5b/partitions.bin?v=bd0f7954aca2",
+          "offset": 32768
+        },
+        {
+          "path": "waveshare-s3-touch-lcd-3.5b/boot_app0.bin?v=f94c5d786a7a",
+          "offset": 57344
+        },
+        {
+          "path": "waveshare-s3-touch-lcd-3.5b.bin?v=c3b88a0d28d3",
+          "offset": 65536
+        }
+      ]
+    }
+  ]
+}

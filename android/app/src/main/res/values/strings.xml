@@ -1,0 +1,20 @@
+<resources>
+    <string name="app_name">MokaBot</string>
+    <string name="connect_title">Connect to your MokaBot</string>
+    <string name="connect_bluetooth">Connect via Bluetooth</string>
+    <string name="bluetooth_hint">Bluetooth: Waveshare ESP32-S3 board only.</string>
+    <string name="wifi_address_hint">Address (IP or mokabot.local)</string>
+    <string name="connect_wifi">Connect via WiFi</string>
+    <string name="wifi_hint">WiFi: the address shown on the MokaBot screen (IP button).</string>
+    <string name="menu_brew">Brew</string>
+    <string name="menu_settings">Settings</string>
+    <string name="menu_disconnect">Disconnect</string>
+    <string name="status_scanning">Searching for MokaBot over Bluetooth…</string>
+    <string name="status_connecting">Connecting…</string>
+    <string name="status_not_found">No MokaBot found over Bluetooth. Is it switched on and nearby?</string>
+    <string name="status_bt_off">Switch Bluetooth on first.</string>
+    <string name="status_no_permission">Bluetooth permission denied.</string>
+    <string name="status_failed">Could not connect: %1$s</string>
+    <string name="disconnected">MokaBot disconnected</string>
+    <string name="saved">Saved</string>
+</resources>

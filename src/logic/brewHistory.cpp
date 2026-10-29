@@ -58,6 +58,8 @@ static volatile SlotInfo slotInfo[BREW_SLOT_LAST - BREW_SLOT_FIRST + 1];
 
 static bool readSlotInfo(char slot, SlotInfo *info);
 static void refreshSlotInfo();
+static bool mountSlotsFs(bool formatIfNeeded);
+static BrewSlotResult writeSlotFile(char slot, int mode, uint8_t power, const BrewSample *data, long count);
 
 // ---- Profile playback ----
 // A saved brew replayed from the profile page: an extraction follows the
@@ -118,10 +120,6 @@ static void recordSample(int status){
 }
 
 static void historyTask(void *param){
-  // Read what the saved slots hold (mounting/formatting SPIFFS if needed)
-  // here rather than in the UI or at boot.
-  refreshSlotInfo();
-
   TickType_t lastWake = xTaskGetTickCount();
   int lastStatus = 0;
   while(true){
@@ -155,15 +153,30 @@ static void historyTask(void *param){
 void brewHistoryStart(void){
   if(historyMutex != NULL) return;
   historyMutex = xSemaphoreCreateMutex();
+  // Mounted (formatted on a new or erased board) here, on the caller's stack
+  // (setup(): Arduino's 8 KB loop task): formatting from the 3 KB history task
+  // overflowed its stack and the board rebooted in a loop until a SPIFFS
+  // image was flashed. Then read what the saved slots hold.
+  mountSlotsFs(true);
+  refreshSlotInfo();
   // No I2C: only reads values the sensor tasks already keep.
   xTaskCreatePinnedToCore(historyTask, "history", 3072, NULL, 3, NULL, CORE_UI);
 }
 
-// Mounts SPIFFS on first use (formats it if it was never formatted, which can
-// take a few seconds once).
-static bool ensureSlotsFs(){
-  if(!slotsFsReady) slotsFsReady = SPIFFS.begin(true);
+// Mounts SPIFFS; formatIfNeeded formats it when it cannot be mounted (never
+// formatted, or corrupted), which can take a few seconds once.
+static bool mountSlotsFs(bool formatIfNeeded){
+  if(!slotsFsReady){
+    slotsFsReady = SPIFFS.begin(formatIfNeeded);
+    if(!slotsFsReady) Serial.println("Brew history: SPIFFS not mounted, saved brews unavailable");
+  }
   return slotsFsReady;
+}
+
+// Later uses (web server, UI) never format: only brewHistoryStart() does, on
+// a stack large enough for it.
+static bool ensureSlotsFs(){
+  return mountSlotsFs(false);
 }
 
 static void slotPath(char slot, char *path, size_t size){
@@ -193,11 +206,14 @@ BrewSlotResult brewHistorySaveSlot(char slot){
 
   if(count <= 0 || mode == 0) return BREW_SLOT_EMPTY;
   if(!copy) return BREW_SLOT_FS_ERROR;
-  if(!ensureSlotsFs()){
-    free(copy);
-    return BREW_SLOT_FS_ERROR;
-  }
+  BrewSlotResult result = writeSlotFile(slot, mode, power, copy, count);
+  free(copy);
+  return result;
+}
 
+// Writes a slot file (overwriting it) and refreshes the cached slot info.
+static BrewSlotResult writeSlotFile(char slot, int mode, uint8_t power, const BrewSample *data, long count){
+  if(!ensureSlotsFs()) return BREW_SLOT_FS_ERROR;
   char path[16];
   slotPath(slot, path, sizeof(path));
   File file = SPIFFS.open(path, FILE_WRITE);
@@ -206,13 +222,50 @@ BrewSlotResult brewHistorySaveSlot(char slot){
     SlotHeader header = { BREW_SLOT_MAGIC, (uint8_t)mode, power, (uint16_t)count };
     size_t dataSize = count * sizeof(BrewSample);
     ok = file.write((const uint8_t *)&header, sizeof(header)) == sizeof(header) &&
-         file.write((const uint8_t *)copy, dataSize) == dataSize;
+         file.write((const uint8_t *)data, dataSize) == dataSize;
     file.close();
   }
-  free(copy);
   Serial.printf("Brew history: %s slot %c (%ld samples)\n", ok ? "saved to" : "could not write", slot, count);
   if(ok) refreshSlotInfo();
   return ok ? BREW_SLOT_SAVED : BREW_SLOT_FS_ERROR;
+}
+
+BrewSlotResult brewHistoryImportSlot(char slot, int mode, int power, const char *text){
+  slot = toupper((unsigned char)slot);
+  if(slot < BREW_SLOT_FIRST || slot > BREW_SLOT_LAST) return BREW_SLOT_INVALID;
+  if(getMokaStatus() != 0) return BREW_SLOT_NOT_OFF;
+  if((mode != STATUS_BREWING && mode != STATUS_MANUAL_POWER) || power < 0 || power > 100) return BREW_SLOT_BAD_DATA;
+
+  BrewSample *data = (BrewSample *)malloc(BREW_HISTORY_CAPACITY * sizeof(BrewSample));
+  if(!data) return BREW_SLOT_FS_ERROR;
+  // One sample per line: seconds tempDeci pressureMbar targetDeci.
+  long count = 0;
+  bool valid = true;
+  const char *p = text;
+  while(valid && *p){
+    char *end;
+    long v[4];
+    for(int k = 0; k < 4 && valid; k++){
+      v[k] = strtol(p, &end, 10);
+      valid = end != p;
+      p = end;
+    }
+    if(!valid) break;
+    while(*p == ' ' || *p == '\r' || *p == '\n' || *p == '\t') p++;
+    valid = count < BREW_HISTORY_CAPACITY &&
+            v[0] >= 0 && v[0] <= UINT16_MAX &&
+            (count == 0 || v[0] >= data[count - 1].seconds) &&
+            v[1] >= INT16_MIN && v[1] <= INT16_MAX &&
+            v[2] >= 0 && v[2] <= UINT16_MAX &&
+            v[3] >= INT16_MIN && v[3] <= INT16_MAX;
+    if(!valid) break;
+    data[count++] = { (uint16_t)v[0], (int16_t)v[1], (uint16_t)v[2], (int16_t)v[3] };
+  }
+  // An extraction is replayed from its targets: the first one must exist.
+  if(valid && (count == 0 || (mode == STATUS_BREWING && data[0].targetDeci == INT16_MIN))) valid = false;
+  BrewSlotResult result = valid ? writeSlotFile(slot, mode, (uint8_t)power, data, count) : BREW_SLOT_BAD_DATA;
+  free(data);
+  return result;
 }
 
 BrewSlotResult brewHistoryDeleteSlot(char slot){
@@ -471,6 +524,8 @@ String brewSlotJson(char slot){
     json += slot;
     json += "\",\"mode\":";
     json += header.mode;
+    json += ",\"power\":";
+    json += header.power;
     json += ",\"samples\":[";
     BrewSample sample;
     for(uint16_t k = 0; k < header.count; k++){

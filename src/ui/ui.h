@@ -99,6 +99,8 @@ void setProWeigth(const char * text);
 void setExtractButtonLabel(const char * text);
 // Profile page, where PREHEAT is on the extract page: target and mode.
 void setProfileStatusLabel(const char * text);
+// Blue 5x5 px square (top right) shown while a phone is connected over Bluetooth.
+void ui_set_ble_indicator(bool visible);
 void showScaleButton(int activate);
 void showSplashScreen(int activate);
 #ifdef __cplusplus

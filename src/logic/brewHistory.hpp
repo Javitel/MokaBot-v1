@@ -11,7 +11,9 @@
 extern "C" {
 #endif
 
-// Starts the recording task. Call once from setup().
+// Mounts the saved brews' filesystem (formatting it on a new board) and
+// starts the recording task. Call once from setup(): formatting needs its
+// large stack.
 void brewHistoryStart(void);
 
 // Pressure inside the moka (bar), estimated from the temperature once it is
@@ -61,11 +63,17 @@ enum BrewSlotResult {
   BREW_SLOT_INVALID,     // slot is not A, B or C
   BREW_SLOT_NOT_OFF,     // the moka is not OFF (status 0)
   BREW_SLOT_EMPTY,       // no finished brew recorded
-  BREW_SLOT_FS_ERROR     // filesystem / memory error
+  BREW_SLOT_FS_ERROR,    // filesystem / memory error
+  BREW_SLOT_BAD_DATA     // imported brew is not valid
 };
 // Saves the last recorded brew into slot 'A', 'B' or 'C' (overwriting it).
 // Only allowed while the moka is OFF, i.e. the brew has finished.
 BrewSlotResult brewHistorySaveSlot(char slot);
+// Writes an imported brew into slot 'A', 'B' or 'C' (overwriting it). mode is
+// 2 or 3, power the manual power percentage (0 = not recorded); text holds
+// one sample per line, "seconds tempDeci pressureMbar targetDeci" (0.1 C,
+// mbar; -32768 / 0 for no value, as BrewSample). Only while the moka is OFF.
+BrewSlotResult brewHistoryImportSlot(char slot, int mode, int power, const char *text);
 // Deletes the brew saved in slot 'A', 'B' or 'C'. Returns BREW_SLOT_SAVED on
 // success (also when the slot was already empty), BREW_SLOT_INVALID or
 // BREW_SLOT_FS_ERROR otherwise.
@@ -73,7 +81,7 @@ BrewSlotResult brewHistoryDeleteSlot(char slot);
 // {"A":{"samples":n,"seconds":s,"mode":2|3}|null,"B":...,"C":...}
 String brewSlotsJson();
 // Samples of the brew saved in slot 'A', 'B' or 'C', for GET /brewSlot:
-// {"slot":"A","mode":2|3,"samples":[...]} (same sample format as
+// {"slot":"A","mode":2|3,"power":p,"samples":[...]} (same sample format as
 // brewHistoryJson). "" when the slot is empty or unreadable.
 String brewSlotJson(char slot);
 #endif

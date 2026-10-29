@@ -21,6 +21,7 @@
 #include "logic/pressureSensor.hpp"
 #include "logic/webserver.hpp"
 #include "logic/brewHistory.hpp"
+#include "logic/bleLink.hpp"
 #include "taskCores.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -102,6 +103,7 @@ String formatTemp(float celsius, const char *prefix){
 
 void calculateLabels(void *param){
   initCycle = true;
+  bool lastBleConnected = false;
   String lastIp, lastTempText, lastPressureText, lastTargetText, lastExtraText, lastBloomText, lastBrewText, lastExtractText, lastProfileStatusText;
   while(true){
     vTaskDelay( pdMS_TO_TICKS( 50 ));
@@ -207,6 +209,11 @@ void calculateLabels(void *param){
     updateLabel(lastBrewText, brewText, setProTemp);
     updateLabel(lastExtractText, extractText, setExtractButtonLabel);
     updateLabel(lastProfileStatusText, profileStatusText, setProfileStatusLabel);
+    bool ble = bleConnected();
+    if(initCycle || ble != lastBleConnected){
+      lastBleConnected = ble;
+      ui_set_ble_indicator(ble);
+    }
     xSemaphoreGive(lvglMutex);
     initCycle = false;
   }
@@ -247,6 +254,8 @@ void setup() {
   // No I2C; next to the WiFi stack (core 0) at low priority.
   xTaskCreatePinnedToCore(webserverService, "webserver",4096, NULL, 3, &WebserviceTask, CORE_I2C);
   ui_init();
+  // Bluetooth link for the Android app (Waveshare only; no-op elsewhere).
+  bleStart();
   initCycle = true;
 
 }

@@ -12,7 +12,7 @@
 #include "logic/moka.hpp"
 #include "logic/pressureSensor.hpp"
 #include "logic/ota.hpp"
-#include "logic/brewHistory.hpp"
+#include "logic/api.hpp"
 #include <Update.h>
 #define HTTP_PORT 80
 // Reachable as http://mokabot.local (mDNS) and, on routers that register DHCP
@@ -32,87 +32,6 @@ MokaWebServer *server = nullptr;
 Preferences preferencesWS;
 String ip = "Disconnected";
 int mokaWifiStatus= 0;
-
-// Appends "name":value to a JSON object body; NaN becomes null.
-// decimals < 0 uses %g with 10 significant digits (for very small values).
-// Appends value as a JSON string literal (quotes, backslashes and control
-// characters escaped).
-static void appendJsonString(String &json, const String &value) {
-  json += '"';
-  for (size_t k = 0; k < value.length(); k++) {
-    char c = value[k];
-    if (c == '"' || c == '\\') { json += '\\'; json += c; }
-    else if ((unsigned char)c < 0x20) { char esc[8]; snprintf(esc, sizeof(esc), "\\u%04x", c); json += esc; }
-    else json += c;
-  }
-  json += '"';
-}
-
-static void appendJson(String &json, const char *name, double value, int decimals = 6) {
-  char str[64];
-  if (isnan(value)) snprintf(str, sizeof(str), "\"%s\":null", name);
-  else if (decimals < 0) snprintf(str, sizeof(str), "\"%s\":%.10g", name, value);
-  else snprintf(str, sizeof(str), "\"%s\":%.*f", name, decimals, value);
-  if (json.length() > 1) json += ",";
-  json += str;
-}
-
-static float currentInternalPressure(){
-  return brewInternalPressure();
-}
-
-// {"temp":<C>,"pressure":<bar>}
-String retrieveData(){
-  String json = "{";
-  appendJson(json, "temp", getCurrentTemp());
-  appendJson(json, "pressure", currentInternalPressure());
-  json += "}";
-  return json;
-}
-
-// {"temp":<C>,"pressure":<bar>,"time":<brew seconds>,"status":<moka status>}
-String retrieveExtractionData(){
-  String json = "{";
-  appendJson(json, "temp", getCurrentTemp());
-  appendJson(json, "pressure", currentInternalPressure());
-  appendJson(json, "time", getBrewTime());
-  appendJson(json, "status", getMokaStatus());
-  json += "}";
-  return json;
-}
-
-// All settings values as JSON, keyed by the settings form input ids.
-String retrieveSettings(){
-  String json = "{";
-  double current[6];
-  getPID(current);
-  appendJson(json, "PVal", current[0]);
-  appendJson(json, "IVal", current[1]);
-  appendJson(json, "DVal", current[2]);
-  getResistorValues(current);
-  appendJson(json, "RVal", current[0]);
-  appendJson(json, "SHA", current[1], -1);
-  appendJson(json, "SHB", current[2], -1);
-  appendJson(json, "SHC", current[3], -1);
-  appendJson(json, "BloomTime", getBloomTargetTime());
-  appendJson(json, "BoilTemp", getBoilingTemp(getCurrentPressure()/100000), 2);
-  appendJson(json, "BloomOffset", getBloomOffset());
-  appendJson(json, "ManualCutoff", getManualCutoff(), 0);
-  appendJson(json, "PreheatOffset", getPreheatOffset());
-  // Celsius; the page shows it in Fahrenheit when the screen uses it.
-  appendJson(json, "OvershootMargin", getOvershootMargin());
-  appendJson(json, "Fahrenheit", ui_use_fahrenheit() ? 1 : 0, 0);
-  appendJson(json, "Decimals", ui_show_decimals() ? 1 : 0, 0);
-  char hex[32];
-  snprintf(hex, sizeof(hex), ",\"ButtonColor\":\"#%06lx\"", (unsigned long)ui_get_button_color());
-  json += hex;
-  json += ",\"OtaUrl\":";
-  appendJsonString(json, otaGetUrl());
-  json += ",\"OtaFile\":";
-  appendJsonString(json, otaFirmwareFile());
-  json += "}";
-  return json;
-}
 
 // ---- Cancelling provisioning ----------------------------------------------
 // WiFiProvisioner has no public abort: its blocking loop() only ends when the
@@ -261,125 +180,29 @@ void sendIndex() {
 void sendBrew() {
   sendEmbeddedPage(brew_html_start, brew_html_end);
 }
-void sendData() {
-  server->send(200, "application/json", retrieveData());
-}
-// GET /brewHistory?session=S&from=N: the recorded brew samples (all of them
-// for a new session, otherwise only those from index N).
-void sendBrewHistory() {
-  long session = server->hasArg("session") ? server->arg("session").toInt() : -1;
-  long from = server->hasArg("from") ? server->arg("from").toInt() : 0;
-  server->send(200, "application/json", brewHistoryJson(session, from));
-}
-// POST /brewSave?slot=A|B|C: saves the finished brew into that slot.
-void handleBrewSave() {
-  String slot = server->arg("slot");
-  BrewSlotResult result = slot.length() == 1 ? brewHistorySaveSlot(slot[0]) : BREW_SLOT_INVALID;
-  switch(result){
-    case BREW_SLOT_SAVED:   server->send(200, "text/plain", "Saved to slot " + slot); break;
-    case BREW_SLOT_INVALID: server->send(400, "text/plain", "Unknown slot"); break;
-    case BREW_SLOT_NOT_OFF: server->send(409, "text/plain", "Switch the moka OFF first"); break;
-    case BREW_SLOT_EMPTY:   server->send(404, "text/plain", "No finished brew to save"); break;
-    default:                server->send(500, "text/plain", "Could not write the slot"); break;
-  }
-}
-// POST /brewDelete?slot=A|B|C: deletes the brew saved in that slot.
-void handleBrewDelete() {
-  String slot = server->arg("slot");
-  BrewSlotResult result = slot.length() == 1 ? brewHistoryDeleteSlot(slot[0]) : BREW_SLOT_INVALID;
-  switch(result){
-    case BREW_SLOT_SAVED:   server->send(200, "text/plain", "Slot " + slot + " deleted"); break;
-    case BREW_SLOT_INVALID: server->send(400, "text/plain", "Unknown slot"); break;
-    default:                server->send(500, "text/plain", "Could not delete the slot"); break;
-  }
-}
-// GET /brewSlots: what each saved slot holds.
-void sendBrewSlots() {
-  server->send(200, "application/json", brewSlotsJson());
-}
-// GET /brewSlot?slot=A|B|C: the samples of the brew saved in that slot.
-void sendBrewSlot() {
-  String slot = server->arg("slot");
-  String json = slot.length() == 1 ? brewSlotJson(slot[0]) : String();
-  if(json.length() == 0) server->send(404, "text/plain", "Empty slot");
-  else server->send(200, "application/json", json);
-}
-void sendBrewData() {
-  server->send(200, "application/json", retrieveExtractionData());
-}
-void sendSettingsValues() {
-  server->send(200, "application/json", retrieveSettings());
-}
 void sendSettings() {
   sendEmbeddedPage(settings_html_start, settings_html_end);
 }
-// Reads a "#rrggbb" / "rrggbb" query argument. Returns false if missing or invalid.
-static bool readHexColorArg(const char *name, uint32_t &out) {
-  if (!server->hasArg(name)) return false;
-  String value = server->arg(name);
-  if (value.startsWith("#")) value = value.substring(1);
-  if (value.length() != 6) return false;
-  for (size_t k = 0; k < value.length(); k++) {
-    if (!isxdigit((unsigned char)value[k])) return false;
+
+// Query arguments of the web server's current request.
+class WebServerArgs : public ApiArgs {
+public:
+  bool has(const char *name) const override { return server->hasArg(name); }
+  String get(const char *name) const override { return server->arg(name); }
+};
+
+// Every data endpoint (see api.hpp) is answered by apiHandle().
+static void handleApi() {
+  WebServerArgs args;
+  ApiResponse response;
+  String method = server->method() == HTTP_POST ? "POST" : "GET";
+  // WebServer keeps a non-form request body in the "plain" argument.
+  if (apiHandle(method, server->uri(), args, server->arg("plain"), response)) {
+    server->send(response.status, response.contentType, response.body);
   }
-  out = strtoul(value.c_str(), nullptr, 16);
-  return true;
-}
-
-// Reads a numeric query argument. Returns false if missing, empty or below minVal.
-static bool readArg(const char *name, double minVal, double &out) {
-  if (!server->hasArg(name)) return false;
-  String value = server->arg(name);
-  if (value.length() == 0) return false;
-  double parsed = value.toDouble();
-  if (parsed < minVal) return false;
-  out = parsed;
-  return true;
-}
-
-void handleUpdate() {
-  double value;
-
-  // PID
-  double pid[3];
-  getPID(pid);
-  bool pidChanged = false;
-  pidChanged |= readArg("PVal", 0.0, pid[0]);
-  pidChanged |= readArg("IVal", 0.0, pid[1]);
-  pidChanged |= readArg("DVal", 0.0, pid[2]);
-  if (pidChanged) setPID(pid[0], pid[1], pid[2]);
-
-  // Resistors
-  double resistors[6];
-  getResistorValues(resistors);
-  bool resistorsChanged = false;
-  resistorsChanged |= readArg("RVal", 0.0, resistors[0]);
-  resistorsChanged |= readArg("SHA", -1.0, resistors[1]);
-  resistorsChanged |= readArg("SHB", -1.0, resistors[2]);
-  resistorsChanged |= readArg("SHC", -1.0, resistors[3]);
-  if (resistorsChanged) setResistorValues(resistors[0], resistors[1], resistors[2], resistors[3]);
-
-  // Bloom / boil
-  if (readArg("BloomTime", 0.0, value)) setBloomTime(value);
-  if (readArg("BoilTemp", 0.0, value)) overrideBoiling(value);
-  if (readArg("BloomOffset", -20.0, value)) setBloomOffset(value);
-  // Clamped to -10..0 by setPreheatOffset().
-  if (readArg("PreheatOffset", -1e9, value)) setPreheatOffset(value);
-  // Celsius (converted by the page); clamped to 0.5..10 by setOvershootMargin().
-  if (readArg("OvershootMargin", 0.0, value)) setOvershootMargin(value);
-  // Any integer, negative or positive.
-  if (readArg("ManualCutoff", -1e9, value)) setManualCutoff((int)lround(value));
-
-  // UI
-  uint32_t buttonColor;
-  if (readHexColorArg("ButtonColor", buttonColor)) ui_set_button_color(buttonColor);
-  if (readArg("Fahrenheit", 0.0, value)) ui_set_use_fahrenheit(value != 0);
-  if (readArg("Decimals", 0.0, value)) ui_set_show_decimals(value != 0);
-
-  // OTA
-  if (server->hasArg("OtaUrl")) otaSetUrl(server->arg("OtaUrl"));
-
-  server->send(200, "text/plain", "OK");
+  else {
+    server->send(404, "text/plain", "Not found");
+  }
 }
 
 // Starts the HTTP server, retrying until port 80 is free; the provisioning
@@ -437,16 +260,9 @@ void serverStart(){
   server = new MokaWebServer(HTTP_PORT);
   server->on("/debug", HTTP_GET, sendIndex);
   server->on("/", HTTP_GET, sendBrew);
-  server->on("/temperature", HTTP_GET, sendData);
-  server->on("/brewInfo", HTTP_GET, sendBrewData);
-  server->on("/brewHistory", HTTP_GET, sendBrewHistory);
-  server->on("/brewSave", HTTP_POST, handleBrewSave);
-  server->on("/brewDelete", HTTP_POST, handleBrewDelete);
-  server->on("/brewSlots", HTTP_GET, sendBrewSlots);
-  server->on("/brewSlot", HTTP_GET, sendBrewSlot);
-  server->on("/settingsInfo", HTTP_GET, sendSettingsValues);
+  for (int k = 0; API_GET_PATHS[k]; k++) server->on(API_GET_PATHS[k], HTTP_GET, handleApi);
+  for (int k = 0; API_POST_PATHS[k]; k++) server->on(API_POST_PATHS[k], HTTP_POST, handleApi);
   server->on("/settings", HTTP_GET, sendSettings);
-  server->on("/set", HTTP_GET, handleUpdate);
   server->on("/firmware", HTTP_POST, handleFirmwareUploadDone, handleFirmwareUploadData);
 
   if(beginServer()){

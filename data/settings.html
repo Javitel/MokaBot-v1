@@ -125,7 +125,8 @@
     <span id="saveStatus" role="status"></span>
   </form>
 
-  <!-- Separate from the settings form: deletes a brew saved in slot A/B/C. -->
+  <!-- Separate from the settings form: downloads, imports or deletes a brew
+       saved in slot A/B/C. -->
   <fieldset>
     <legend>Saved brews</legend>
     <label for="brewSlot">Slot:</label>
@@ -134,8 +135,12 @@
       <option value="B">B</option>
       <option value="C">C</option>
     </select>
+    <button type="button" id="brewDownload" disabled>Download</button>
     <button type="button" id="brewDelete" disabled>Delete</button>
-    <span id="brewDeleteStatus" role="status"></span>
+    <span id="brewDeleteStatus" role="status"></span><br>
+    <label for="brewImportFile">Import a downloaded brew into the selected slot:</label><br>
+    <input type="file" id="brewImportFile" accept=".json,application/json">
+    <button type="button" id="brewImport">Import</button>
   </fieldset>
 
   <!-- Separate from the settings form: uploads a firmware .bin to /firmware. -->
@@ -253,13 +258,16 @@
     var BREW_MODE_NAMES = { 2: "extraction", 3: "manual power" };
     var slotSelect = document.getElementById("brewSlot");
     var deleteButton = document.getElementById("brewDelete");
+    var downloadButton = document.getElementById("brewDownload");
 
     function formatSeconds(seconds) {
       return String(Math.floor(seconds / 60)).padStart(2, "0") + ":" + String(seconds % 60).padStart(2, "0");
     }
 
+    // Download and Delete only for a slot that holds a brew.
     function updateDeleteButton() {
       deleteButton.disabled = !brewSlots[slotSelect.value];
+      downloadButton.disabled = deleteButton.disabled;
     }
 
     function loadBrewSlots() {
@@ -289,6 +297,83 @@
         .then(function (r) { return r.text().then(function (text) { status.textContent = text; }); })
         .then(loadBrewSlots)
         .catch(function () { status.textContent = "Delete failed (connection error)"; });
+    });
+
+    // Saves the slot's samples (GET /brewSlot, same format as the brew
+    // page's history) as mokabot-brew-<slot>.json.
+    downloadButton.addEventListener("click", function () {
+      var name = slotSelect.value;
+      var status = document.getElementById("brewDeleteStatus");
+      status.textContent = "Downloading...";
+      fetch("/brewSlot?slot=" + name)
+        .then(function (r) { return r.ok ? r.blob() : Promise.reject(r.status); })
+        .then(function (blob) {
+          var link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.download = "mokabot-brew-" + name + ".json";
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          URL.revokeObjectURL(link.href);
+          status.textContent = "";
+        })
+        .catch(function (err) {
+          console.error(err);
+          status.textContent = "Download failed";
+        });
+    });
+
+    // Import: reads a file saved with Download, checks it, asks before writing
+    // it into the selected slot and sends the samples to POST /brewImport as
+    // text (one "seconds tempDeci pressureMbar targetDeci" line each).
+    var NO_VALUE = -32768;   // no temperature / target, as stored on the device
+
+    function toDeci(value) {
+      return value === null || value === undefined ? NO_VALUE : Math.round(value * 10);
+    }
+
+    // Returns the request body, or null when the file is not a brew export.
+    function brewImportBody(brew) {
+      if (!brew || (brew.mode !== 2 && brew.mode !== 3) || !Array.isArray(brew.samples) ||
+          brew.samples.length === 0 || brew.samples.length > 900) return null;
+      var lines = [];
+      for (var i = 0; i < brew.samples.length; i++) {
+        var s = brew.samples[i];
+        if (!Array.isArray(s) || s.length < 4 || typeof s[0] !== "number") return null;
+        var pressure = s[2] === null ? 0 : Math.round(s[2] * 1000);
+        lines.push([Math.round(s[0]), toDeci(s[1]), pressure, toDeci(s[3])].join(" "));
+      }
+      return lines.join("\n");
+    }
+
+    document.getElementById("brewImport").addEventListener("click", function () {
+      var file = document.getElementById("brewImportFile").files[0];
+      var status = document.getElementById("brewDeleteStatus");
+      var name = slotSelect.value;
+      if (!file) { status.textContent = "Choose a downloaded brew (.json) first"; return; }
+      file.text()
+        .then(function (text) {
+          var brew;
+          try { brew = JSON.parse(text); } catch (e) { brew = null; }
+          var body = brewImportBody(brew);
+          if (body === null) { status.textContent = "Not a valid MokaBot brew file"; return; }
+          var seconds = brew.samples[brew.samples.length - 1][0];
+          var incoming = formatSeconds(seconds) + " " + (BREW_MODE_NAMES[brew.mode] || "brew");
+          var question = brewSlots[name]
+            ? "Slot " + name + " holds " + formatSeconds(brewSlots[name].seconds) + " " +
+              (BREW_MODE_NAMES[brewSlots[name].mode] || "brew") + ". Replace it with " + file.name + " (" + incoming + ")?"
+            : "Import " + file.name + " (" + incoming + ") into slot " + name + "?";
+          if (!confirm(question)) return;
+          status.textContent = "Importing...";
+          return fetch("/brewImport?slot=" + name + "&mode=" + brew.mode + "&power=" + (brew.power || 0),
+                       { method: "POST", headers: { "Content-Type": "text/plain" }, body: body })
+            .then(function (r) { return r.text().then(function (msg) { status.textContent = msg; }); })
+            .then(loadBrewSlots);
+        })
+        .catch(function (err) {
+          console.error(err);
+          status.textContent = "Import failed (connection error)";
+        });
     });
 
     loadBrewSlots();

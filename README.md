@@ -28,10 +28,11 @@ List of features
   - Manual power: the heater runs at a fixed 50-100% of the time window, and switches off automatically at the boiling point plus a configurable margin.
   - Profiles: select one of the saved brews (A, B, C) and replay it: preheat to the temperature its recorded brew started at, then follow its saved target curve (or manual power percentage) for its duration. A replayed extraction also ends early if, after reaching its target, the temperature overshoots it by more than a margin (2 °C by default, set from the settings page): the boiler is running low on water.
 - Brew page (Chart.js) with temperature, pressure and target temperature, with customizable line colours. The brew history is recorded on the device, so the whole curve is shown even if the page is opened late. When a saved profile is replayed, its recorded curves are drawn underneath as dotted, half-transparent lines of the same colours.
-- Save finished brews in three slots (A, B, C) and delete them from the settings page.
+- Save finished brews in three slots (A, B, C), and download (JSON), import or delete them from the settings page.
 - Settings page to adjust details: PID values, fixed resistor and Steinhart-Hart coefficients of the thermistor, bloom time and offset, boiling temperature, manual power cut-off, °C/°F and decimals, screen colour.
 - Firmware updates over the air: from a URL (version check, confirmation, reinstall) or uploading the .bin from the settings page.
 - Reachable at http://mokabot.local once connected to WiFi.
+- Android app (`android/`): the brew page and settings page in an app, connected over WiFi (both boards) or Bluetooth LE (Waveshare board only; a blue 5x5 px square in the top right corner of the screen shows the Bluetooth connection). GitHub Actions builds the APK ("Android app" workflow, artifact `mokabot-app`).
 
 Components used:
 
@@ -83,7 +84,7 @@ TO DO instrucctions (Moka pot, WT32-SC01 base and Waveshare 3.5B base)
 ## Usage
 
 **First setup**
-1. Flash the firmware over USB: `pio run -e WT32-SC01-MOKA -t upload` (or `-e WAVESHARE-S3-TOUCH-LCD-3_5B-MOKA`).
+1. Flash the firmware over USB: from the browser with the web installer (`flash.html`, Chrome/Edge, served over https, e.g. GitHub Pages), or with PlatformIO: `pio run -e WT32-SC01-MOKA -t upload` (or `-e WAVESHARE-S3-TOUCH-LCD-3_5B-MOKA`).
 2. Tap the IP button (top left). Without saved WiFi credentials the device opens a setup access point called **"ESP32 Wi-Fi Provisioning"**: connect to it with a phone and choose your network. Tapping the IP button again while the setup portal is open cancels it.
 3. Once connected, the IP button shows the address. The web pages are at `http://mokabot.local/` (brew chart), `/settings` and `/debug`.
 
@@ -103,7 +104,7 @@ TO DO instrucctions (Moka pot, WT32-SC01 base and Waveshare 3.5B base)
 
 ## Building
 
-Built with [PlatformIO](https://platformio.org/). `pio run` builds both boards (`WT32-SC01-MOKA` and `WAVESHARE-S3-TOUCH-LCD-3_5B-MOKA`) and copies the firmware images for OTA updates to `build/`, together with a `.version` file per board. The version is set with `custom_firmware_version` in `platformio.ini`. The web pages are compiled into the firmware, so there is no filesystem image to upload.
+Built with [PlatformIO](https://platformio.org/). `pio run` builds both boards (`WT32-SC01-MOKA` and `WAVESHARE-S3-TOUCH-LCD-3_5B-MOKA`) and copies the firmware images for OTA updates to `build/`, together with a `.version` file per board. For the web installer (`flash.html`) it also copies each board's bootloader, partition table and boot_app0 to `build/<board>/` and writes `build/manifest.json` with their flash offsets. The version is set with `custom_firmware_version` in `platformio.ini`. The web pages are compiled into the firmware, so there is no filesystem image to upload.
 
 ## Contributing
 
