@@ -58,8 +58,6 @@ Components used:
    For moka pots, rigt now I use a Delonghi Alicia: It has screw mounting points, heater power is quite good for the volume, heater is built-in the aluminium (like a kettle).
 Other moka pots should work but the experience might be a bit less smooth. Feel free to request new ones, post ideas, STLs... and I will gladly add them.
 
-TO DO add STL files for the different screens
-
 TO DO add wiring diagrams for both screens
 
 TO DO instrucctions (Moka pot, WT32-SC01 base and Waveshare 3.5B base)
