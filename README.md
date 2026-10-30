@@ -82,10 +82,25 @@ TO DO instrucctions (Moka pot, WT32-SC01 base and Waveshare 3.5B base)
 	-	Better boiling point calibration process. Still room for improvement
   
 
+## Download
+
+| What | Link |
+|---|---|
+| Web installer (flash a board over USB from Chrome/Edge) | https://javitel.github.io/MokaBot-v1/flash.html |
+| Latest release (all files, release notes) | https://github.com/Javitel/MokaBot-v1/releases/latest |
+| All releases | https://github.com/Javitel/MokaBot-v1/releases |
+| Android app | [mokabot.apk](https://github.com/Javitel/MokaBot-v1/releases/latest/download/mokabot.apk) |
+| iPhone / iPad app (unsigned, must be signed to install) | [MokaBot-unsigned.ipa](https://github.com/Javitel/MokaBot-v1/releases/latest/download/MokaBot-unsigned.ipa) |
+| WT32-SC01 firmware (OTA / manual upload) | [wt32-sc01.bin](https://github.com/Javitel/MokaBot-v1/releases/latest/download/wt32-sc01.bin) |
+| Waveshare ESP32-S3-Touch-LCD-3.5B firmware | [waveshare-s3-touch-lcd-3.5b.bin](https://github.com/Javitel/MokaBot-v1/releases/latest/download/waveshare-s3-touch-lcd-3.5b.bin) |
+| Build status (firmware, Android, iOS, releases) | https://github.com/Javitel/MokaBot-v1/actions |
+
+On the device, once connected to WiFi: `http://mokabot.local/` (brew chart), `http://mokabot.local/settings` and `http://mokabot.local/debug` (or the IP shown on the screen; `mokabot` is the default device name).
+
 ## Usage
 
 **First setup**
-1. Flash the firmware over USB: from the browser with the web installer (`flash.html`, Chrome/Edge, served over https, e.g. GitHub Pages), or with PlatformIO: `pio run -e WT32-SC01-MOKA -t upload` (or `-e WAVESHARE-S3-TOUCH-LCD-3_5B-MOKA`).
+1. Flash the firmware over USB: from the browser with the [web installer](https://javitel.github.io/MokaBot-v1/flash.html) (Chrome/Edge on a computer), or with PlatformIO: `pio run -e WT32-SC01-MOKA -t upload` (or `-e WAVESHARE-S3-TOUCH-LCD-3_5B-MOKA`).
 2. Tap the IP button (top left). Without saved WiFi credentials the device opens a setup access point called **"ESP32 Wi-Fi Provisioning"**: connect to it with a phone and choose your network. Tapping the IP button again while the setup portal is open cancels it.
 3. Once connected, the IP button shows the address. The web pages are at `http://mokabot.local/` (brew chart), `/settings` and `/debug`.
 
@@ -112,10 +127,12 @@ Built with [PlatformIO](https://platformio.org/). `pio run` builds both boards (
 
 Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a version tag is pushed:
 
-1. Set the new version in `platformio.ini` (`custom_firmware_version = 1.0.2`) and commit it.
+1. Set the new version in `platformio.ini` (`custom_firmware_version = 1.0.2`), run `pio run` (so `build/` carries the new version too) and commit.
 2. Tag and push the tag: `git tag v1.0.2` and `git push github v1.0.2` (the tag must match the version, or the workflow stops).
 3. The workflow builds both boards, the Android APK and the unsigned iOS app, and creates the GitHub Release `v1.0.2` with `wt32-sc01.bin/.version`, `waveshare-s3-touch-lcd-3.5b.bin/.version`, `mokabot.apk` and `MokaBot-unsigned.ipa`. Devices find it through their default OTA folder (the latest release).
-4. It also publishes the web installer on GitHub Pages: https://javitel.github.io/MokaBot-v1/flash.html (needs Settings > Pages > Source: GitHub Actions, once).
+4. It also publishes the web installer on GitHub Pages: https://javitel.github.io/MokaBot-v1/flash.html.
+
+One-time GitHub setup (already done): Settings > Pages > Source: **GitHub Actions**, and Settings > Environments > github-pages > Deployment branches and tags: a tag rule `v*` (Pages only deploys from `main` otherwise).
 
 ## Contributing
 
