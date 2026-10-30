@@ -191,6 +191,15 @@ extern const char brew_html_start[] asm("_binary__pio_pages_brew_html_gz_start")
 extern const char brew_html_end[] asm("_binary__pio_pages_brew_html_gz_end");
 extern const char settings_html_start[] asm("_binary__pio_pages_settings_html_gz_start");
 extern const char settings_html_end[] asm("_binary__pio_pages_settings_html_gz_end");
+extern const char touch_icon_start[] asm("_binary_data_apple_touch_icon_png_start");
+extern const char touch_icon_end[] asm("_binary_data_apple_touch_icon_png_end");
+
+// "Add to Home Screen" (manifest for Android/Chrome; iOS reads the page's
+// apple-touch-icon and apple-mobile-web-app-* tags).
+static const char WEB_APP_MANIFEST[] =
+  "{\"name\":\"MokaBot\",\"short_name\":\"MokaBot\",\"start_url\":\"/\","
+  "\"display\":\"standalone\",\"background_color\":\"#ffffff\",\"theme_color\":\"#6d4c41\","
+  "\"icons\":[{\"src\":\"/apple-touch-icon.png\",\"sizes\":\"180x180\",\"type\":\"image/png\"}]}";
 
 // The browser unpacks the page (Content-Encoding: gzip).
 static void sendEmbeddedPage(const char *start, const char *end) {
@@ -206,6 +215,13 @@ void sendBrew() {
 }
 void sendSettings() {
   sendEmbeddedPage(settings_html_start, settings_html_end);
+}
+static void sendTouchIcon() {
+  server->sendHeader("Cache-Control", "max-age=86400");
+  server->send_P(200, "image/png", touch_icon_start, touch_icon_end - touch_icon_start);
+}
+static void sendManifest() {
+  server->send(200, "application/manifest+json", WEB_APP_MANIFEST);
 }
 
 // Query arguments of the web server's current request.
@@ -287,6 +303,8 @@ void serverStart(){
   for (int k = 0; API_GET_PATHS[k]; k++) server->on(API_GET_PATHS[k], HTTP_GET, handleApi);
   for (int k = 0; API_POST_PATHS[k]; k++) server->on(API_POST_PATHS[k], HTTP_POST, handleApi);
   server->on("/settings", HTTP_GET, sendSettings);
+  server->on("/apple-touch-icon.png", HTTP_GET, sendTouchIcon);
+  server->on("/manifest.json", HTTP_GET, sendManifest);
   server->on("/firmware", HTTP_POST, handleFirmwareUploadDone, handleFirmwareUploadData);
 
   if(beginServer()){

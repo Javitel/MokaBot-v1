@@ -1,0 +1,58 @@
+# XcodeGen project (https://github.com/yonaskolb/XcodeGen): `xcodegen generate`
+# in this folder writes MokaBot.xcodeproj (not committed). GitHub Actions
+# builds it on macOS (.github/workflows/ios.yml).
+name: MokaBot
+options:
+  bundleIdPrefix: com.mokabot
+  deploymentTarget:
+    iOS: "15.0"
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+targets:
+  MokaBot:
+    type: application
+    platform: iOS
+    sources:
+      - path: MokaBot
+      # The bridge and the pages' libraries, shared with the Android app:
+      # copied as the "web" folder of the app bundle.
+      - path: ../mobile/web
+        type: folder
+        buildPhase: resources
+      # The firmware's pages, so the app shows the same ones.
+      - path: ../data/brew.html
+        buildPhase: resources
+      - path: ../data/settings.html
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mokabot.app
+        TARGETED_DEVICE_FAMILY: "1,2"          # iPhone and iPad
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: NO
+    info:
+      path: MokaBot/Info.plist
+      properties:
+        CFBundleDisplayName: MokaBot
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        NSBluetoothAlwaysUsageDescription: MokaBot connects to your moka pot over Bluetooth.
+        NSLocalNetworkUsageDescription: MokaBot connects to your moka pot on the WiFi network.
+        # The MokaBot's web server is plain HTTP on the local network.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    scheme: {}

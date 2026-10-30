@@ -24,8 +24,10 @@ android {
     }
 
     // The brew and settings pages come from the firmware's data/ folder
-    // (copied at build time), so the app always shows the same pages.
+    // (copied at build time), so the app always shows the same pages; the
+    // bridge and the pages' libraries are shared with the iOS app (mobile/web).
     sourceSets["main"].assets.srcDir(layout.buildDirectory.dir("generated/pages"))
+    sourceSets["main"].assets.srcDir(rootProject.file("../mobile/web"))
 }
 
 val copyPages by tasks.registering(Copy::class) {

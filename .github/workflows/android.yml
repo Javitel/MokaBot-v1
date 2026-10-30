@@ -5,12 +5,14 @@ on:
   push:
     paths:
       - "android/**"
+      - "mobile/**"
       - "data/brew.html"
       - "data/settings.html"
       - ".github/workflows/android.yml"
   pull_request:
     paths:
       - "android/**"
+      - "mobile/**"
       - "data/brew.html"
       - "data/settings.html"
   workflow_dispatch:

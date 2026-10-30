@@ -32,6 +32,7 @@ List of features
 - Settings page to adjust details: PID values, fixed resistor and Steinhart-Hart coefficients of the thermistor, bloom time and offset, boiling temperature, manual power cut-off, °C/°F and decimals, screen colour.
 - Firmware updates over the air: from a URL (version check, confirmation, reinstall) or uploading the .bin from the settings page.
 - Reachable at http://mokabot.local once connected to WiFi (the name can be changed in the settings page, e.g. kitchen.local).
+- iPhone / iPad: open http://mokabot.local in Safari and use "Add to Home Screen" for an app-like icon (WiFi). The native app (`ios/`, same pages, Bluetooth and WiFi) is built unsigned by GitHub Actions ("iOS app" workflow, artifact `mokabot-ios-unsigned`); it has to be signed (Xcode with an Apple ID, AltStore/Sideloadly, or TestFlight) to be installed.
 - Android app (`android/`): the brew page and settings page in an app, connected over WiFi (both boards) or Bluetooth LE (both boards; a blue 5x5 px square near the top left corner of the screen shows the Bluetooth connection). With several MokaBots in reach, the app lists them by device name (the name set in the settings page) and signal strength, and remembers the last one; "Search the WiFi network" finds them on WiFi without typing an address. When a phone connects over Bluetooth the blue square flashes (and the Waveshare beeps), so you know which MokaBot it joined. GitHub Actions builds the APK ("Android app" workflow, artifact `mokabot-app`).
 
 Components used:

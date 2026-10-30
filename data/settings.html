@@ -2,7 +2,14 @@
 <html>
 <head>
   <title>Moka Bot Settings</title>
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- "Add to Home Screen" (iPhone/iPad, Android): icon, full screen, name. -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="MokaBot">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.json">
   <script src="https://cdn.jsdelivr.net/npm/@jaames/iro@5.5.2/dist/iro.min.js"></script>
   <style>
     .color-editor { display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-start; }
@@ -15,6 +22,9 @@
   </style>
 </head>
 <body>
+  <!-- The brew page is "./" on the device and in the apps; a home-screen web
+       app has no browser back button. -->
+  <button type="button" onclick="document.location='./'">Back to brew</button>
   <form id="settings" action="/set" method="get" target="_self">
 
     <fieldset>

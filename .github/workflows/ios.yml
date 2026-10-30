@@ -1,0 +1,44 @@
+# Builds the iPhone/iPad app (ios/, XcodeGen project) on macOS. Unsigned:
+# the .ipa artifact must be signed before it can be installed (Xcode with an
+# Apple ID, AltStore / Sideloadly, or TestFlight with a developer account).
+name: iOS app
+
+on:
+  push:
+    paths:
+      - "ios/**"
+      - "mobile/**"
+      - "data/brew.html"
+      - "data/settings.html"
+      - ".github/workflows/ios.yml"
+  pull_request:
+    paths:
+      - "ios/**"
+      - "mobile/**"
+      - "data/brew.html"
+      - "data/settings.html"
+  workflow_dispatch:
+
+jobs:
+  ipa:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+      - name: Build (unsigned)
+        run: |
+          xcodebuild -project ios/MokaBot.xcodeproj -scheme MokaBot -configuration Release \
+            -sdk iphoneos -destination "generic/platform=iOS" -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+      - name: Package .ipa
+        run: |
+          mkdir -p ios/build/ipa/Payload
+          cp -R ios/build/Build/Products/Release-iphoneos/MokaBot.app ios/build/ipa/Payload/
+          cd ios/build/ipa && zip -qr ../MokaBot-unsigned.ipa Payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mokabot-ios-unsigned
+          path: ios/build/MokaBot-unsigned.ipa

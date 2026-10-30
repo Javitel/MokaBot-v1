@@ -1,16 +1,32 @@
-// Loaded first in the bundled brew and settings pages (see BrowserActivity).
-// Routes their requests to the MokaBot through the app (WiFi or Bluetooth),
-// saves their downloads with Android's file picker and hides what the app
-// cannot do.
+// Loaded first in the bundled brew and settings pages of the Android app
+// (BrowserActivity) and the iOS app (BrowserView). Routes their requests to
+// the MokaBot through the app (WiFi or Bluetooth), saves their downloads with
+// the system's file dialog and hides what the apps cannot do.
 (function () {
+  // The app side: Android's MokaBridge object or iOS's message handler.
+  var native = window.MokaBridge ? {
+    request: function (id, method, target, body) { MokaBridge.request(id, method, target, body); },
+    saveFile: function (name, text) { MokaBridge.saveFile(name, text); }
+  } : {
+    request: function (id, method, target, body) {
+      window.webkit.messageHandlers.mokaBridge.postMessage(
+        { type: "request", id: id, method: method, target: target, body: body });
+    },
+    saveFile: function (name, text) {
+      window.webkit.messageHandlers.mokaBridge.postMessage({ type: "saveFile", name: name, text: text });
+    }
+  };
+
   // ---- Device requests: fetch("/brewHistory?...") etc. go to MokaBridge.
   var pending = {};
   var nextId = 1;
   var originalFetch = window.fetch.bind(window);
 
-  // The pages' own requests: same origin, outside the app's /app/ files.
+  // The pages' own requests: same host, outside the app's /app/ files. (Not
+  // compared by origin: the iOS app's custom scheme has an opaque origin.)
   function isDeviceUrl(url) {
-    return url.origin === location.origin && url.pathname.indexOf("/app/") !== 0;
+    return url.protocol === location.protocol && url.host === location.host &&
+      url.pathname.indexOf("/app/") !== 0;
   }
 
   // Called by the app with the device's answer (body in base64). Status 0 is
@@ -38,7 +54,7 @@
     return new Promise(function (resolve, reject) {
       var id = nextId++;
       pending[id] = { resolve: resolve, reject: reject };
-      MokaBridge.request(id, method, url.pathname + url.search, body);
+      native.request(id, method, url.pathname + url.search, body);
     });
   };
 
@@ -61,7 +77,7 @@
     var blob = blobs[this.href];
     if (this.download && blob) {
       var name = this.download;
-      blob.text().then(function (text) { MokaBridge.saveFile(name, text); });
+      blob.text().then(function (text) { native.saveFile(name, text); });
       return;
     }
     return originalClick.call(this);
