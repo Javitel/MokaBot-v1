@@ -28,10 +28,11 @@
 
 #define OTA_PREFS_NAMESPACE "my-app"
 #define OTA_URL_KEY         "otaUrl"
-// Folder used until another one is saved from the settings page: the build/
-// folder of the GitHub repository (GitHub redirects "raw" links to
-// raw.githubusercontent.com; redirects are followed).
-#define OTA_DEFAULT_URL     "https://github.com/Javitel/MokaBot-v1/raw/refs/heads/main/build/"
+// Folder used until another one is saved from the settings page: the files of
+// the latest GitHub Release (<name>.bin and <name>.version, attached by
+// .github/workflows/release.yml). GitHub redirects these links to the release's
+// asset storage; redirects are followed.
+#define OTA_DEFAULT_URL     "https://github.com/Javitel/MokaBot-v1/releases/latest/download/"
 // How long the final status (error / up to date) stays on screen.
 #define OTA_RESULT_SHOW_MS     5000
 // How long a found update waits for the user to confirm it.
@@ -52,19 +53,39 @@ static void setStatus(const char *text){
   strlcpy(otaStatus, text, sizeof(otaStatus));
 }
 
+// Earlier default folders. The settings form sends the folder it shows, so a
+// device whose settings were saved stored the default of that time
+// explicitly; these mean "the default" and follow it.
+static const char *const OTA_OLD_DEFAULT_URLS[] = {
+  "https://github.com/Javitel/MokaBot-v1/raw/refs/heads/main/build/",
+  nullptr
+};
+
+static bool isDefaultUrl(String url){
+  url.trim();
+  if(!url.endsWith("/")) url += "/";
+  if(url == OTA_DEFAULT_URL) return true;
+  for(int k = 0; OTA_OLD_DEFAULT_URLS[k]; k++){
+    if(url == OTA_OLD_DEFAULT_URLS[k]) return true;
+  }
+  return false;
+}
+
 String otaGetUrl(){
   Preferences prefs;
   prefsLock(); prefs.begin(OTA_PREFS_NAMESPACE, true);
   String url = prefs.getString(OTA_URL_KEY, OTA_DEFAULT_URL);
-  if(url.length() == 0) url = OTA_DEFAULT_URL;
   prefs.end(); prefsUnlock();
+  if(url.length() == 0 || isDefaultUrl(url)) url = OTA_DEFAULT_URL;
   return url;
 }
 
+// The default (current or earlier) is stored as "" (use the default), so a
+// later change of the default applies.
 void otaSetUrl(const String &url){
   Preferences prefs;
   prefsLock(); prefs.begin(OTA_PREFS_NAMESPACE, false);
-  prefs.putString(OTA_URL_KEY, url);
+  prefs.putString(OTA_URL_KEY, isDefaultUrl(url) ? String() : url);
   prefs.end(); prefsUnlock();
 }
 

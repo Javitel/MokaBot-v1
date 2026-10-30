@@ -100,12 +100,22 @@ TO DO instrucctions (Moka pot, WT32-SC01 base and Waveshare 3.5B base)
 - **Swipe left or right**: change page (extraction, manual power, profiles). Changing page switches the moka off.
 
 **Firmware updates (OTA)**
-- Set the "Firmware folder URL" in the settings page and publish there the `.bin` and `.version` files that `pio run` leaves in `build/`. A long press on the colour button checks the version and asks for confirmation before updating.
+- A long press on the colour button checks for a newer version and asks for confirmation before updating. By default it downloads the latest GitHub Release (`https://github.com/Javitel/MokaBot-v1/releases/latest/download/`).
+- To use your own server, set the "Firmware folder URL" in the settings page and publish there the `.bin` and `.version` files that `pio run` leaves in `build/`.
 - Or upload the `.bin` directly from the settings page.
 
 ## Building
 
 Built with [PlatformIO](https://platformio.org/). `pio run` builds both boards (`WT32-SC01-MOKA` and `WAVESHARE-S3-TOUCH-LCD-3_5B-MOKA`) and copies the firmware images for OTA updates to `build/`, together with a `.version` file per board. For the web installer (`flash.html`) it also copies each board's bootloader, partition table and boot_app0 to `build/<board>/` and writes `build/manifest.json` with their flash offsets. The version is set with `custom_firmware_version` in `platformio.ini`. The web pages are compiled into the firmware, so there is no filesystem image to upload.
+
+## Releases
+
+Releases are built by GitHub Actions (`.github/workflows/release.yml`) when a version tag is pushed:
+
+1. Set the new version in `platformio.ini` (`custom_firmware_version = 1.0.2`) and commit it.
+2. Tag and push the tag: `git tag v1.0.2` and `git push github v1.0.2` (the tag must match the version, or the workflow stops).
+3. The workflow builds both boards, the Android APK and the unsigned iOS app, and creates the GitHub Release `v1.0.2` with `wt32-sc01.bin/.version`, `waveshare-s3-touch-lcd-3.5b.bin/.version`, `mokabot.apk` and `MokaBot-unsigned.ipa`. Devices find it through their default OTA folder (the latest release).
+4. It also publishes the web installer on GitHub Pages: https://javitel.github.io/MokaBot-v1/flash.html (needs Settings > Pages > Source: GitHub Actions, once).
 
 ## Contributing
 

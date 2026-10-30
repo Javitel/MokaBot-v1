@@ -16,9 +16,7 @@ void boilingOn(lv_event_t * e);
 void decreaseTargetTemp(lv_event_t * e);
 void increaseTargetTemp(lv_event_t * e);
 void saveTargetTemp(lv_event_t * e);
-void resetWiFiSettings(lv_event_t * e);
 void manualBloomPhase(lv_event_t * e);
-int WifiSaved();
 #ifdef __cplusplus
 } /*extern "C"*/
 #endif

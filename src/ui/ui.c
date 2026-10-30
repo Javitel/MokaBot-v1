@@ -9,7 +9,6 @@
 #include "logic/pressureSensor.hpp"
 #include "logic/moka.hpp"
 #include "logic/brewHistory.hpp"
-#include "ui_helpers.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"

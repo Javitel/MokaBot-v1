@@ -1,0 +1,130 @@
+# Release: pushing a tag "v<version>" (e.g. v1.0.2, matching
+# custom_firmware_version in platformio.ini) builds the firmware of every
+# board, the Android APK and the unsigned iOS app, and
+#  - creates the GitHub Release with them (the devices' default OTA folder is
+#    https://github.com/Javitel/MokaBot-v1/releases/latest/download/);
+#  - publishes the web installer (flash.html + the flash images) on GitHub
+#    Pages (Settings > Pages > Source: GitHub Actions).
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the tag matches custom_firmware_version
+        run: |
+          version=$(sed -n 's/^custom_firmware_version *= *//p' platformio.ini | tr -d '\r')
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match custom_firmware_version = $version in platformio.ini"
+            exit 1
+          fi
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/pip
+            ~/.platformio/.cache
+          key: ${{ runner.os }}-pio-${{ hashFiles('platformio.ini') }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+      - name: Build all boards
+        run: pio run
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: build/
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+      - name: Build APK
+        run: |
+          gradle -p android assembleDebug
+          cp android/app/build/outputs/apk/debug/app-debug.apk mokabot.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: mokabot.apk
+
+  ios:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build (unsigned)
+        run: |
+          brew install xcodegen
+          (cd ios && xcodegen generate)
+          xcodebuild -project ios/MokaBot.xcodeproj -scheme MokaBot -configuration Release \
+            -sdk iphoneos -destination "generic/platform=iOS" -derivedDataPath ios/build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build
+          mkdir -p ios/build/ipa/Payload
+          cp -R ios/build/Build/Products/Release-iphoneos/MokaBot.app ios/build/ipa/Payload/
+          (cd ios/build/ipa && zip -qr ../../../MokaBot-unsigned.ipa Payload)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios
+          path: MokaBot-unsigned.ipa
+
+  release:
+    needs: [firmware, android, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Create the release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          # OTA downloads <name>.bin and <name>.version by these exact names.
+          files: |
+            artifacts/firmware/wt32-sc01.bin
+            artifacts/firmware/wt32-sc01.version
+            artifacts/firmware/waveshare-s3-touch-lcd-3.5b.bin
+            artifacts/firmware/waveshare-s3-touch-lcd-3.5b.version
+            artifacts/android/mokabot.apk
+            artifacts/ios/MokaBot-unsigned.ipa
+
+  pages:
+    # The web installer: flash.html with build/ (manifest.json and the
+    # bootloader, partition table and app of each board) next to it. Browsers
+    # cannot fetch release files from another site, so they are served here.
+    needs: firmware
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}flash.html
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: site/build
+      - name: Assemble the site
+        run: cp flash.html site/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deploy
+        uses: actions/deploy-pages@v4
