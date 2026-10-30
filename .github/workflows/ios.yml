@@ -21,7 +21,7 @@ on:
 
 jobs:
   ipa:
-    runs-on: macos-14
+    runs-on: macos-15   # Xcode 16: reads the project format of current XcodeGen
     steps:
       - uses: actions/checkout@v4
       - name: Generate the Xcode project
