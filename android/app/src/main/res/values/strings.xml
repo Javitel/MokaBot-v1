@@ -2,7 +2,19 @@
     <string name="app_name">MokaBot</string>
     <string name="connect_title">Connect to your MokaBot</string>
     <string name="connect_bluetooth">Connect via Bluetooth</string>
-    <string name="bluetooth_hint">Bluetooth: Waveshare ESP32-S3 board only.</string>
+    <string name="bluetooth_hint">Connects to the last MokaBot used, or lists them when several are in reach.</string>
+    <string name="choose_device">Choose another device…</string>
+    <string name="choose_device_title">Choose your MokaBot</string>
+    <!-- name, signal, dBm -->
+    <string name="device_entry">%1$s — %2$s (%3$d dBm)</string>
+    <string name="device_last_used"> · last used</string>
+    <string name="signal_near">near</string>
+    <string name="signal_medium">medium</string>
+    <string name="signal_far">far</string>
+    <string name="search_wifi">Search the WiFi network</string>
+    <string name="status_searching_wifi">Searching for MokaBots on the WiFi network…</string>
+    <string name="status_wifi_not_found">No MokaBot answered on this WiFi network. Is the phone on the same network?</string>
+    <string name="status_connecting_to">Connecting to %1$s…</string>
     <string name="wifi_address_hint">Address (IP or mokabot.local)</string>
     <string name="connect_wifi">Connect via WiFi</string>
     <string name="wifi_hint">WiFi: the address shown on the MokaBot screen (IP button).</string>

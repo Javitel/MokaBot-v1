@@ -2,7 +2,7 @@
 
 // Data endpoints used by the brew and settings pages (/brewHistory,
 // /settingsInfo, /set, /brewSave...), independent of the transport: the web
-// server (WiFi) and the Bluetooth link (Waveshare board) answer them through
+// server (WiFi) and the Bluetooth link (MOKA_BLE builds) answer them through
 // apiHandle(), so both behave the same.
 
 #include <Arduino.h>

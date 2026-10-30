@@ -23,6 +23,13 @@
             android:layout_marginTop="24dp"
             android:text="@string/connect_bluetooth" />
 
+        <Button
+            android:id="@+id/chooseButton"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/choose_device" />
+
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
@@ -44,6 +51,13 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="@string/connect_wifi" />
+
+        <Button
+            android:id="@+id/searchButton"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/search_wifi" />
 
         <TextView
             android:layout_width="wrap_content"

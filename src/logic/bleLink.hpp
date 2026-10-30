@@ -1,11 +1,12 @@
 #pragma once
 
-// Bluetooth LE link for the Android app (boards built with MOKA_BLE, i.e. the
-// Waveshare ESP32-S3; the WT32-SC01 has no IRAM left for Bluetooth and only
-// offers WiFi). It carries the same requests as the web server's data
+// Bluetooth LE link for the Android app (boards built with MOKA_BLE: both;
+// the WT32-SC01 needs wt32-iram.py to fit it). It
+// carries the same requests as the web server's data
 // endpoints (see api.hpp), so the app's pages work over either transport.
 //
-// GATT service MOKA_BLE_SERVICE_UUID, advertised as "MokaBot":
+// GATT service MOKA_BLE_SERVICE_UUID, advertised with the device name (see
+// getDeviceName(), "mokabot" by default) in the scan response:
 //  - MOKA_BLE_RX_UUID (write / write without response): requests
 //  - MOKA_BLE_TX_UUID (notify): responses
 // A message is sent as packets of at most (MTU - 3) bytes; the first byte of
@@ -27,6 +28,8 @@ extern "C" {
 
 // Starts advertising and serving requests. No-op without MOKA_BLE.
 void bleStart(void);
+// Advertises a new device name (after it changes in the settings).
+void bleSetName(const char *name);
 // True while a phone is connected over Bluetooth (always false without
 // MOKA_BLE).
 bool bleConnected(void);

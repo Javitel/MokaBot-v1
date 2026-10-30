@@ -632,7 +632,7 @@
 #endif
 
 /*PNG decoder library*/
-#define LV_USE_PNG 1
+#define LV_USE_PNG 0   /* the boot logo is a 2-bit indexed image (no decoder) */
 
 /*BMP decoder library*/
 #define LV_USE_BMP 1

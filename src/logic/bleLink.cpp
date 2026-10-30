@@ -3,6 +3,7 @@
 #ifndef MOKA_BLE
 
 void bleStart(void) {}
+void bleSetName(const char *name) {}
 bool bleConnected(void) { return false; }
 
 #else
@@ -10,6 +11,8 @@ bool bleConnected(void) { return false; }
 #include <Arduino.h>
 #include <NimBLEDevice.h>
 #include "logic/api.hpp"
+#include "logic/webserver.hpp"
+#include "devices/beep.hpp"
 #include "taskCores.hpp"
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
@@ -39,6 +42,9 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     peerMtu = 23;
     rxBuffer = "";
     rxOverflow = false;
+    // Tells which MokaBot the phone connected to (boards with audio; the
+    // screen's blue square flashes too).
+    beep();
     Serial.println("Bluetooth: phone connected");
   }
   void onDisconnect(NimBLEServer *server, NimBLEConnInfo &connInfo, int reason) override {
@@ -130,10 +136,36 @@ static void bleWorker(void *param) {
   }
 }
 
+// Advertises the service and, in the scan response (room for up to 29
+// characters), the device name, so the app can list several MokaBots by name.
+static void applyName(const char *name) {
+  NimBLEDevice::setDeviceName(name);
+  NimBLEAdvertisementData advertisementData;
+  advertisementData.setFlags(BLE_HS_ADV_F_DISC_GEN | BLE_HS_ADV_F_BREDR_UNSUP);
+  advertisementData.addServiceUUID(MOKA_BLE_SERVICE_UUID);
+  NimBLEAdvertisementData scanResponse;
+  scanResponse.setName(name);
+  NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
+  advertising->setAdvertisementData(advertisementData);
+  advertising->setScanResponseData(scanResponse);
+  advertising->enableScanResponse(true);
+}
+
+void bleSetName(const char *name) {
+  if (!bleServer) return;
+  NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
+  bool wasAdvertising = advertising->isAdvertising();
+  if (wasAdvertising) advertising->stop();
+  applyName(name);
+  // While connected the stack does not advertise; onDisconnect() restarts it
+  // with the new name.
+  if (wasAdvertising) advertising->start();
+}
+
 void bleStart(void) {
   if (bleServer) return;
   requestQueue = xQueueCreate(4, sizeof(String *));
-  NimBLEDevice::init("MokaBot");
+  NimBLEDevice::init(getDeviceName());
   NimBLEDevice::setMTU(517);
   bleServer = NimBLEDevice::createServer();
   bleServer->setCallbacks(new ServerCallbacks());
@@ -145,15 +177,13 @@ void bleStart(void) {
   txCharacteristic = service->createCharacteristic(MOKA_BLE_TX_UUID, NIMBLE_PROPERTY::NOTIFY);
   service->start();
 
-  NimBLEAdvertising *advertising = NimBLEDevice::getAdvertising();
-  advertising->setName("MokaBot");
-  advertising->addServiceUUID(MOKA_BLE_SERVICE_UUID);
-  advertising->start();
+  applyName(getDeviceName());
+  NimBLEDevice::getAdvertising()->start();
 
   // Like the web server: no I2C, next to the radio stacks on core 0. 8 KB:
   // the JSON answers are built on the heap, but SPIFFS calls need stack.
   xTaskCreatePinnedToCore(bleWorker, "ble", 8192, NULL, 3, NULL, CORE_I2C);
-  Serial.println("Bluetooth: advertising as MokaBot");
+  Serial.printf("Bluetooth: advertising as %s\n", getDeviceName());
 }
 
 bool bleConnected(void) {

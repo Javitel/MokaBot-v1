@@ -82,6 +82,15 @@
     </fieldset>
 
     <fieldset>
+      <legend>Network</legend>
+      <label for="DeviceName">Device name:</label>
+      <input type="text" id="DeviceName" name="DeviceName" placeholder="mokabot" size="20" maxlength="31"
+             pattern="[A-Za-z0-9]([A-Za-z0-9\-]{0,29}[A-Za-z0-9])?"
+             title="Letters, digits and hyphens (not first or last), up to 31">.local<br>
+      <small>The device answers at http://&lt;name&gt;.local right away; routers learn the new name on the next WiFi connection.</small>
+    </fieldset>
+
+    <fieldset>
       <legend>Firmware update</legend>
       <label for="OtaUrl">Firmware folder URL:</label>
       <input type="url" id="OtaUrl" name="OtaUrl" placeholder="http://server/firmware/" size="40"><br>
@@ -446,6 +455,13 @@
         .then(function (r) {
           if (!r.ok) throw r.status;
           status.textContent = "Saved";
+          // Opened at the old <name>.local: continue at the new one.
+          var name = document.getElementById("DeviceName").value.toLowerCase();
+          var current = location.hostname.toLowerCase();
+          if (name && /\.local$/.test(current) && current !== name + ".local") {
+            location.href = "http://" + name + ".local" + location.pathname;
+            return;
+          }
           // Show the values the device actually stored; screen settings are
           // applied on the device's next 200 ms UI cycle, so wait a bit.
           setTimeout(loadSettings, 400);

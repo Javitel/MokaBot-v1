@@ -4,6 +4,7 @@
 #include "logic/pressureSensor.hpp"
 #include "logic/ota.hpp"
 #include "logic/brewHistory.hpp"
+#include "logic/webserver.hpp"
 
 const char *const API_GET_PATHS[] = {
   "/temperature", "/brewInfo", "/brewHistory", "/brewSlots", "/brewSlot",
@@ -136,6 +137,8 @@ static String retrieveSettings() {
   char hex[32];
   snprintf(hex, sizeof(hex), ",\"ButtonColor\":\"#%06lx\"", (unsigned long)ui_get_button_color());
   json += hex;
+  json += ",\"DeviceName\":";
+  appendJsonString(json, getDeviceName());
   json += ",\"OtaUrl\":";
   appendJsonString(json, otaGetUrl());
   json += ",\"OtaFile\":";
@@ -208,6 +211,9 @@ static void applySettings(const ApiArgs &args) {
   if (readHexColorArg(args, "ButtonColor", buttonColor)) ui_set_button_color(buttonColor);
   if (readArg(args, "Fahrenheit", 0.0, value)) ui_set_use_fahrenheit(value != 0);
   if (readArg(args, "Decimals", 0.0, value)) ui_set_show_decimals(value != 0);
+
+  // Network (an invalid name is ignored; the page shows the stored one)
+  if (args.has("DeviceName")) setDeviceName(args.get("DeviceName").c_str());
 
   // OTA
   if (args.has("OtaUrl")) otaSetUrl(args.get("OtaUrl"));

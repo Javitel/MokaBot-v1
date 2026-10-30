@@ -16,16 +16,18 @@ import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import java.io.ByteArrayOutputStream
 import java.util.UUID
-import kotlin.coroutines.resume
+
+/** A MokaBot seen in a Bluetooth scan: [name] is its device name, [rssi] its signal (dBm). */
+class FoundDevice(val device: BluetoothDevice, val name: String, val rssi: Int)
 
 /**
- * Bluetooth LE link to the MokaBot (Waveshare board), see the firmware's
+ * Bluetooth LE link to the MokaBot, see the firmware's
  * src/logic/bleLink.hpp. Messages are split into packets of at most
  * (MTU - 3) bytes; the first byte of each packet flags the last one.
  *   request:  "<METHOD> <path>[?query]\n<body>"
@@ -210,30 +212,40 @@ class BleTransport private constructor(private val context: Context) : Transport
         private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private const val LAST_PACKET = 0x01
 
-        /** Scans for a MokaBot (its service UUID) for up to [timeoutMs]. */
-        suspend fun scan(context: Context, timeoutMs: Long = 10_000): BluetoothDevice? {
+        /**
+         * Scans for MokaBots (their service UUID) for [durationMs] and returns
+         * them strongest signal first. Stops early when the device with
+         * address [stopOn] is seen (the last one used).
+         */
+        suspend fun scan(context: Context, durationMs: Long = 3_000, stopOn: String? = null): List<FoundDevice> {
             val manager = context.getSystemService(BluetoothManager::class.java)
-            val scanner = manager?.adapter?.bluetoothLeScanner ?: return null
+            val scanner = manager?.adapter?.bluetoothLeScanner ?: return emptyList()
             val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build()
             val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
-            var scanCallback: ScanCallback? = null
-            return try {
-                kotlinx.coroutines.withTimeoutOrNull(timeoutMs) {
-                    suspendCancellableCoroutine<BluetoothDevice?> { continuation ->
-                        scanCallback = object : ScanCallback() {
-                            override fun onScanResult(callbackType: Int, result: ScanResult) {
-                                if (continuation.isActive) continuation.resume(result.device)
-                            }
-                            override fun onScanFailed(errorCode: Int) {
-                                if (continuation.isActive) continuation.resume(null)
-                            }
-                        }
-                        scanner.startScan(listOf(filter), settings, scanCallback)
+            val found = LinkedHashMap<String, FoundDevice>()
+            val stop = CompletableDeferred<Unit>()
+            val scanCallback = object : ScanCallback() {
+                override fun onScanResult(callbackType: Int, result: ScanResult) {
+                    val address = result.device.address
+                    synchronized(found) {
+                        // The name comes in the scan response (the device name in its
+                        // settings); results without it keep the name already seen.
+                        val name = result.scanRecord?.deviceName ?: found[address]?.name ?: "MokaBot"
+                        found[address] = FoundDevice(result.device, name, result.rssi)
                     }
+                    if (address == stopOn) stop.complete(Unit)
                 }
-            } finally {
-                scanCallback?.let { scanner.stopScan(it) }
+                override fun onScanFailed(errorCode: Int) {
+                    stop.complete(Unit)
+                }
             }
+            scanner.startScan(listOf(filter), settings, scanCallback)
+            try {
+                withTimeoutOrNull(durationMs) { stop.await() }
+            } finally {
+                scanner.stopScan(scanCallback)
+            }
+            return synchronized(found) { found.values.sortedByDescending { it.rssi } }
         }
 
         suspend fun connect(context: Context, device: BluetoothDevice): BleTransport {

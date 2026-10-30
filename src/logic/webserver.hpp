@@ -7,6 +7,11 @@ extern "C" {
 int initNet();
 void resetWiFi();
 const char * getIp();
+// Device name: http://<name>.local and the DHCP hostname ("mokabot" by default).
+const char * getDeviceName(void);
+// Letters, digits and '-' (not first or last), up to 31; saved lowercase.
+// False (and unchanged) when invalid.
+bool setDeviceName(const char *name);
 int checkStoredCreds();
 void webserverService(void *param);
 void provisionWifiConnection();

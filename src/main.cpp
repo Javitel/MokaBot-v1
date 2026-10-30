@@ -101,9 +101,14 @@ String formatTemp(float celsius, const char *prefix){
   return formatValue(celsius, prefix, "°C");
 }
 
+#define BLE_FLASH_MS        1500
+#define BLE_FLASH_PERIOD_MS 250
+
 void calculateLabels(void *param){
   initCycle = true;
   bool lastBleConnected = false;
+  uint32_t bleConnectedAt = 0;
+  bool lastBleFlashing = false;
   String lastIp, lastTempText, lastPressureText, lastTargetText, lastExtraText, lastBloomText, lastBrewText, lastExtractText, lastProfileStatusText;
   while(true){
     vTaskDelay( pdMS_TO_TICKS( 50 ));
@@ -209,11 +214,16 @@ void calculateLabels(void *param){
     updateLabel(lastBrewText, brewText, setProTemp);
     updateLabel(lastExtractText, extractText, setExtractButtonLabel);
     updateLabel(lastProfileStatusText, profileStatusText, setProfileStatusLabel);
+    // Blue square while a phone is connected over Bluetooth; it flashes for
+    // BLE_FLASH_MS after connecting, to tell which MokaBot the phone joined.
     bool ble = bleConnected();
-    if(initCycle || ble != lastBleConnected){
-      lastBleConnected = ble;
-      ui_set_ble_indicator(ble);
+    if(ble && !lastBleConnected) bleConnectedAt = millis();
+    bool flashing = ble && millis() - bleConnectedAt < BLE_FLASH_MS;
+    if(initCycle || ble != lastBleConnected || flashing || lastBleFlashing){
+      ui_set_ble_indicator(ble && (!flashing || ((millis() - bleConnectedAt) / BLE_FLASH_PERIOD_MS) % 2 == 0));
     }
+    lastBleConnected = ble;
+    lastBleFlashing = flashing;
     xSemaphoreGive(lvglMutex);
     initCycle = false;
   }
@@ -254,7 +264,7 @@ void setup() {
   // No I2C; next to the WiFi stack (core 0) at low priority.
   xTaskCreatePinnedToCore(webserverService, "webserver",4096, NULL, 3, &WebserviceTask, CORE_I2C);
   ui_init();
-  // Bluetooth link for the Android app (Waveshare only; no-op elsewhere).
+  // Bluetooth link for the Android app (no-op on boards built without MOKA_BLE).
   bleStart();
   initCycle = true;
 
