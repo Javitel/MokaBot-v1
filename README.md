@@ -39,6 +39,7 @@ Printed arts:
 
 [https://cults3d.com/es/modelo-3d/variado/mokabot-v1
 ](https://cults3d.com/:5146229)
+
 Components used:
 
  - WT32-SC01 (**NO WT32-SC01 Plus**), or Waveshare ESP32-S3-Touch-LCD-3.5B (adds a speaker for button beeps).
