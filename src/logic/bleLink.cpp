@@ -3,6 +3,7 @@
 #ifndef MOKA_BLE
 
 void bleStart(void) {}
+void bleStop(void) {}
 void bleSetName(const char *name) {}
 bool bleConnected(void) { return false; }
 
@@ -164,7 +165,9 @@ void bleSetName(const char *name) {
 
 void bleStart(void) {
   if (bleServer) return;
-  requestQueue = xQueueCreate(4, sizeof(String *));
+  // Created once: bleStop() / bleStart() only restart the Bluetooth stack.
+  static bool workerStarted = false;
+  if (!requestQueue) requestQueue = xQueueCreate(4, sizeof(String *));
   NimBLEDevice::init(getDeviceName());
   NimBLEDevice::setMTU(517);
   bleServer = NimBLEDevice::createServer();
@@ -182,8 +185,23 @@ void bleStart(void) {
 
   // Like the web server: no I2C, next to the radio stacks on core 0. 8 KB:
   // the JSON answers are built on the heap, but SPIFFS calls need stack.
-  xTaskCreatePinnedToCore(bleWorker, "ble", 8192, NULL, 3, NULL, CORE_I2C);
+  if (!workerStarted) {
+    workerStarted = true;
+    xTaskCreatePinnedToCore(bleWorker, "ble", 8192, NULL, 3, NULL, CORE_I2C);
+  }
   Serial.printf("Bluetooth: advertising as %s\n", getDeviceName());
+}
+
+// Shuts the Bluetooth stack down (controller memory freed), disconnecting a
+// phone. The WiFi provisioning portal (access point + scan + web server) does
+// not work next to it on the classic ESP32: scans hang or find nothing.
+void bleStop(void) {
+  if (!bleServer) return;
+  connected = false;
+  NimBLEDevice::deinit(true);
+  bleServer = nullptr;
+  txCharacteristic = nullptr;
+  Serial.printf("Bluetooth: stopped (free heap %u)\n", (unsigned)ESP.getFreeHeap());
 }
 
 bool bleConnected(void) {

@@ -28,6 +28,9 @@ extern "C" {
 
 // Starts advertising and serving requests. No-op without MOKA_BLE.
 void bleStart(void);
+// Stops Bluetooth until the next bleStart() (used while the WiFi
+// provisioning portal runs).
+void bleStop(void);
 // Advertises a new device name (after it changes in the settings).
 void bleSetName(const char *name);
 // True while a phone is connected over Bluetooth (always false without

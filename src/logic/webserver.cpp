@@ -164,7 +164,11 @@ int initNet() {
   while(!connected){
     WiFi.disconnect();
     ip = "Provisioning...";
+    // The portal needs the radio and memory to itself (see bleStop()).
+    bleStop();
+    Serial.printf("Provisioning: free heap %u\n", (unsigned)ESP.getFreeHeap());
     provisioningWifi();
+    bleStart();
     if(provisioningCancelled){
       WiFi.disconnect();
       ip = "Disconnected";
