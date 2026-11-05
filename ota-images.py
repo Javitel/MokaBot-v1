@@ -20,6 +20,7 @@ import hashlib
 import json
 import os
 import shutil
+import subprocess
 
 Import("env")
 
@@ -112,5 +113,23 @@ if firmware_name:
             fp.write("\n")
         print("Web flasher: %s added to %s" % (chip_family, manifest_path))
 
+    # Reminder after each new image: is this version already released?
+    def report_release(source, target, env):
+        tag = "v" + firmware_version
+        try:
+            released = subprocess.run(["git", "tag", "-l", tag], cwd=env.subst("$PROJECT_DIR"),
+                                      capture_output=True, text=True).stdout.strip() == tag
+        except OSError:
+            return
+        print("=" * 72)
+        if released:
+            print("Firmware %s is already released as %s: bump custom_firmware_version" % (firmware_version, tag))
+            print("in platformio.ini before syncing, or no new release is made.")
+        else:
+            print("Firmware %s is not released yet: the \"Sync repositories\" task tags %s" % (firmware_version, tag))
+            print("and pushes it, which starts the GitHub release.")
+        print("=" * 72)
+
     env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", copy_ota_image)
+    env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", report_release)
     env.AddPostAction("$BUILD_DIR/${PROGNAME}.bin", update_manifest)

@@ -33,7 +33,7 @@ List of features
 - Firmware updates over the air: from a URL (version check, confirmation, reinstall) or uploading the .bin from the settings page.
 - Reachable at http://mokabot.local once connected to WiFi (the name can be changed in the settings page, e.g. kitchen.local).
 - iPhone / iPad: open http://mokabot.local in Safari and use "Add to Home Screen" for an app-like icon (WiFi). The native app (`ios/`, same pages, Bluetooth and WiFi) is built unsigned by GitHub Actions ("iOS app" workflow, artifact `mokabot-ios-unsigned`); it has to be signed (Xcode with an Apple ID, AltStore/Sideloadly, or TestFlight) to be installed.
-- Android app (`android/`): the brew page and settings page in an app, connected over WiFi (both boards) or Bluetooth LE (both boards; a blue 5x5 px square near the top left corner of the screen shows the Bluetooth connection). With several MokaBots in reach, the app lists them by device name (the name set in the settings page) and signal strength, and remembers the last one; "Search the WiFi network" finds them on WiFi without typing an address. When a phone connects over Bluetooth the blue square flashes (and the Waveshare beeps), so you know which MokaBot it joined. GitHub Actions builds the APK ("Android app" workflow, artifact `mokabot-app`).
+- Android app (`android/`): the brew page and settings page in an app, connected over WiFi (both boards) or Bluetooth LE (Waveshare: always; WT32-SC01: while its WiFi is off; a blue 5x5 px square near the top left corner of the screen shows the Bluetooth connection). With several MokaBots in reach, the app lists them by device name (the name set in the settings page) and signal strength, and remembers the last one; "Search the WiFi network" finds them on WiFi without typing an address. When a phone connects over Bluetooth the blue square flashes (and the Waveshare beeps), so you know which MokaBot it joined. GitHub Actions builds the APK ("Android app" workflow, artifact `mokabot-app`).
 
 Printed arts:
 
@@ -79,7 +79,7 @@ TO DO instrucctions (Moka pot, WT32-SC01 base and Waveshare 3.5B base)
  - **Points of improvement**
 	
 	-	Code Refactor: I am not really familiar with C++ object management, UI libraries and basically platformIO/ESP32 development.
-	-	PID Tuning: I have basic PID knowledge and added a basic Integral compensation based on delta temperature between ambient and target (Ki = 0.01 per degree, ~0.7 for a 70°C delta), it is a basic scalar value but I suppose it is not as easy as that.
+	-	PID Tuning: I have basic PID knowledge and added a basic Integral compensation based on delta temperature between ambient and target (the I setting is per degree of target − room; the defaults P 13.31, I 0.00109, D 0 come from the PID calibration in the settings page, and "Reset PID to defaults" there goes back to them), it is a basic scalar value but I suppose it is not as easy as that.
 	-	Adding support for other screens: the Waveshare ESP32-S3-Touch-LCD-3.5B is now supported (with button beeps); the SD card for configuration is still pending.
 	-	Share profiles (saving them on the device is already possible)
 	-	Better boiling point calibration process. Still room for improvement

@@ -1,5 +1,6 @@
 #if defined(BOARD_WT32_SC01)
 
+#include "devices/i2cRecover.hpp"
 #include <Arduino.h>
 #define LGFX_USE_V1
 #include <LovyanGFX.hpp>
@@ -194,6 +195,7 @@ static void my_touch_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
 void displayInit(){
   // Shared I2C bus (touch + sensors), started before anything uses it;
   // initSensor()'s Wire.begin() then finds it running.
+  i2cBusRecover(PIN_SENSOR_SDA, PIN_SENSOR_SCL);
   Wire.begin(PIN_SENSOR_SDA, PIN_SENSOR_SCL);
   Wire.setTimeOut(I2C_TIMEOUT_MS);
 

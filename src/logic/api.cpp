@@ -8,10 +8,10 @@
 
 const char *const API_GET_PATHS[] = {
   "/temperature", "/brewInfo", "/brewHistory", "/brewSlots", "/brewSlot",
-  "/settingsInfo", "/set", nullptr
+  "/settingsInfo", "/set", "/pidTune", nullptr
 };
 const char *const API_POST_PATHS[] = {
-  "/brewSave", "/brewDelete", "/brewImport", nullptr
+  "/brewSave", "/brewDelete", "/brewImport", "/pidTune", "/pidDefaults", nullptr
 };
 
 // ---- Query string arguments ----
@@ -132,6 +132,8 @@ static String retrieveSettings() {
   appendJson(json, "PreheatOffset", getPreheatOffset());
   // Celsius; the page shows it in Fahrenheit when the screen uses it.
   appendJson(json, "OvershootMargin", getOvershootMargin());
+  appendJson(json, "LowWaterRatio", getLowWaterRatio(), 1);
+  appendJson(json, "PidTuneOffset", getPidTuneOffset(), 1);
   appendJson(json, "Fahrenheit", ui_use_fahrenheit() ? 1 : 0, 0);
   appendJson(json, "Decimals", ui_show_decimals() ? 1 : 0, 0);
   char hex[32];
@@ -203,6 +205,10 @@ static void applySettings(const ApiArgs &args) {
   if (readArg(args, "PreheatOffset", -1e9, value)) setPreheatOffset(value);
   // Celsius (converted by the page); clamped to 0.5..10 by setOvershootMargin().
   if (readArg(args, "OvershootMargin", 0.0, value)) setOvershootMargin(value);
+  // 0 = off; otherwise clamped to 1.2..5 by setLowWaterRatio().
+  if (readArg(args, "LowWaterRatio", 0.0, value)) setLowWaterRatio(value);
+  // Clamped to -15..0 by setPidTuneOffset().
+  if (readArg(args, "PidTuneOffset", -1e9, value)) setPidTuneOffset(value);
   // Any integer, negative or positive.
   if (readArg(args, "ManualCutoff", -1e9, value)) setManualCutoff((int)lround(value));
 
@@ -239,7 +245,7 @@ bool apiHandle(const String &method, const String &path, const ApiArgs &args,
   bool isGet = listed(API_GET_PATHS, path);
   bool isPost = listed(API_POST_PATHS, path);
   if (!isGet && !isPost) return false;
-  if ((isGet && method != "GET") || (isPost && method != "POST")) {
+  if (!(isGet && method == "GET") && !(isPost && method == "POST")) {
     respond(out, 405, "text/plain", "Method not allowed");
     return true;
   }
@@ -248,6 +254,48 @@ bool apiHandle(const String &method, const String &path, const ApiArgs &args,
   else if (path == "/brewInfo") respond(out, 200, "application/json", retrieveExtractionData());
   else if (path == "/settingsInfo") respond(out, 200, "application/json", retrieveSettings());
   else if (path == "/brewSlots") respond(out, 200, "application/json", brewSlotsJson());
+  // POST /pidDefaults: back to the firmware's default P, I and D.
+  else if (path == "/pidDefaults") {
+    resetPidDefaults();
+    double pid[3];
+    getDefaultPID(pid);
+    char text[96];
+    snprintf(text, sizeof(text), "PID reset to defaults: P %.2f, I %.5f, D %.2f", pid[0], pid[1], pid[2]);
+    respond(out, 200, "text/plain", text);
+  }
+  // GET /pidTune: {"ready":bool,"phase":0-4,"message":"...","target":C,"temp":C,"ambient":C}
+  // POST /pidTune?action=start|cancel
+  else if (path == "/pidTune" && method == "GET") {
+    static const char *const PHASES[] = { "idle", "heating", "settling", "done", "failed" };
+    int phase = pidTunePhase();
+    String json = "{\"ready\":";
+    json += pidTuneReady() ? "true" : "false";
+    json += ",\"phase\":\"";
+    json += PHASES[phase >= 0 && phase <= 4 ? phase : 0];
+    json += "\",\"message\":";
+    appendJsonString(json, pidTuneMessage());
+    appendJson(json, "target", pidTuneTarget(), 1);
+    appendJson(json, "temp", getCurrentTemp(), 1);
+    appendJson(json, "ambient", getAmbientTemp(), 1);
+    json += "}";
+    respond(out, 200, "application/json", json);
+  }
+  else if (path == "/pidTune") {
+    String action = args.get("action");
+    if (action == "cancel") {
+      pidTuneCancel();
+      respond(out, 200, "text/plain", "PID calibration cancelled");
+    }
+    else if (action == "start" && pidTuneStart()) {
+      respond(out, 200, "text/plain", "PID calibration started");
+    }
+    else if (action == "start") {
+      respond(out, 409, "text/plain", "Start condition not met: the moka must be OFF and the water at most 10 C above the room");
+    }
+    else {
+      respond(out, 400, "text/plain", "Unknown action");
+    }
+  }
   else if (path == "/set") {
     applySettings(args);
     respond(out, 200, "text/plain", "OK");

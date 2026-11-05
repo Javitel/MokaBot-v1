@@ -30,11 +30,19 @@
     <fieldset>
       <legend>PID controller</legend>
       <label for="PVal">P:</label>
-      <input type="number" id="PVal" name="PVal" placeholder="1.0" step="0.000001" min="0" max="100"><br>
+      <input type="number" id="PVal" name="PVal" placeholder="1.0" step="0.000001" min="0" max="500"><br>
       <label for="IVal">I (per &deg;C of target - room):</label>
       <input type="number" id="IVal" name="IVal" placeholder="1.0" step="0.000001" min="0" max="100"><br>
       <label for="DVal">D:</label>
-      <input type="number" id="DVal" name="DVal" placeholder="1.0" step="0.000001" min="0" max="100">
+      <!-- AutoPID scales its derivative by 1e-6: calibrated values are ~1e7..1e9. -->
+      <input type="number" id="DVal" name="DVal" placeholder="1.0" step="any" min="0"><br>
+      <label for="PidTuneOffset">Calibration target, boiling point + (&deg;C):</label>
+      <input type="number" id="PidTuneOffset" name="PidTuneOffset" placeholder="-5" step="0.5" min="-15" max="0"><br>
+      <button type="button" id="pidDefaults">Reset PID to defaults</button>
+      <button type="button" id="pidTuneStart" disabled>Calibrate PID</button>
+      <button type="button" id="pidTuneCancel" hidden>Cancel calibration</button>
+      <span id="pidTuneStatus" role="status"></span><br>
+      <small id="pidTuneHint">Enabled when the moka is OFF and the water in the boiler is at most 10 &deg;C above the room temperature.</small>
     </fieldset>
 
     <fieldset>
@@ -66,9 +74,12 @@
       <label for="PreheatOffset">Preheat limit, boiling point + (&deg;C):</label>
       <input type="number" id="PreheatOffset" name="PreheatOffset" placeholder="-2" step="0.5" min="-10" max="0"><br>
       <small>From -10 to 0: preheat never goes above the boiling point plus this value.</small><br>
-      <label for="OvershootMargin">Profile overshoot stop (<span id="overshootUnit">&deg;C</span> above target):</label>
+      <label for="OvershootMargin">Stop when above target by (<span id="overshootUnit">&deg;C</span>):</label>
       <input type="number" id="OvershootMargin" name="OvershootMargin" placeholder="2" step="0.1" min="0.5" max="10"><br>
-      <small>A replayed profile ends when, after reaching its target, the temperature goes this far above it (water running low).</small>
+      <small>An extraction (normal or profile) ends when, after reaching its target, the temperature goes this far above it (water running low).</small><br>
+      <label for="LowWaterRatio">Low water stop, heating speed &times;:</label>
+      <input type="number" id="LowWaterRatio" name="LowWaterRatio" placeholder="0" step="0.1" min="0" max="5"><br>
+      <small>Experimental, off (0) by default: an extraction ends when the boiler heats this many times faster than at its start (less water left), or keeps heating with the heater almost off. 1.2 to 5 once tuned with logged brews.</small>
     </fieldset>
 
     <fieldset>
@@ -360,7 +371,13 @@
         var s = brew.samples[i];
         if (!Array.isArray(s) || s.length < 4 || typeof s[0] !== "number") return null;
         var pressure = s[2] === null ? 0 : Math.round(s[2] * 1000);
-        lines.push([Math.round(s[0]), toDeci(s[1]), pressure, toDeci(s[3])].join(" "));
+        var line = [Math.round(s[0]), toDeci(s[1]), pressure, toDeci(s[3])];
+        // Heater duty (%) and gain ratio, in brews downloaded since they are recorded.
+        if (s.length >= 6) {
+          line.push(s[4] === null ? 255 : Math.round(s[4]));
+          line.push(s[5] === null ? 0 : Math.min(255, Math.round(s[5] * 10)));
+        }
+        lines.push(line.join(" "));
       }
       return lines.join("\n");
     }
@@ -396,6 +413,66 @@
     });
 
     loadBrewSlots();
+
+    // ---- PID calibration: GET /pidTune every 2 s; the button is enabled when
+    // its start condition is met (OFF, water colder than the room).
+    var PID_TUNE_HELP =
+      "PID calibration\n\n" +
+      "1. Fill the boiler with cool water (at most 10 C above the room temperature) and close the pot.\n" +
+      "2. The heater runs at full power. While the water warms up, MokaBot measures how fast it heats " +
+      "and how long the probe takes to react.\n" +
+      "3. From that it calculates P, I and D and brings the water to 4.5 C below the target " +
+      "(the boiling point plus the calibration offset, -5 C by default, so the water does not boil).\n" +
+      "4. Refinement: three steps of 1.5 C up to the target. After each one it adjusts the gains: " +
+      "gentler if it overshot, faster if it was slow, D off if it oscillated.\n" +
+      "5. The gains of the fastest step without overshoot are saved once the temperature holds " +
+      "within +/-0.4 C of the target for 60 s.\n\n" +
+      "It takes about 20-40 minutes. OFF on the screen, or Cancel here, stops it and keeps the old values.\n\n" +
+      "Start the calibration now?";
+    var pidTuneStartButton = document.getElementById("pidTuneStart");
+    var pidTuneCancelButton = document.getElementById("pidTuneCancel");
+    var pidTuneStatus = document.getElementById("pidTuneStatus");
+    var pidTuneWasRunning = false;
+
+    function pollPidTune() {
+      fetch("/pidTune")
+        .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
+        .then(function (t) {
+          var running = t.phase === "heating" || t.phase === "settling";
+          pidTuneStartButton.disabled = !t.ready || running;
+          pidTuneCancelButton.hidden = !running;
+          var now = t.temp === null ? "" : " (water " + t.temp + " C, room " + t.ambient + " C, target " + t.target + " C)";
+          pidTuneStatus.textContent = (t.message || (t.ready ? "Ready" : "Not ready")) + now;
+          // Finished: show the saved values in the form.
+          if (pidTuneWasRunning && !running) loadSettings();
+          pidTuneWasRunning = running;
+        })
+        .catch(console.error)
+        .then(function () { setTimeout(pollPidTune, 2000); });
+    }
+
+    // Removes the saved P, I and D: the firmware's defaults apply, also after
+    // updates that change them.
+    document.getElementById("pidDefaults").addEventListener("click", function () {
+      if (!confirm("Reset P, I and D to the firmware's default values? Your current values are lost.")) return;
+      fetch("/pidDefaults", { method: "POST" })
+        .then(function (r) { return r.text().then(function (text) { pidTuneStatus.textContent = text; }); })
+        .then(loadSettings)
+        .catch(function () { pidTuneStatus.textContent = "Reset failed (connection error)"; });
+    });
+
+    pidTuneStartButton.addEventListener("click", function () {
+      if (!confirm(PID_TUNE_HELP)) return;
+      fetch("/pidTune?action=start", { method: "POST" })
+        .then(function (r) { return r.text().then(function (text) { pidTuneStatus.textContent = text; }); })
+        .catch(function () { pidTuneStatus.textContent = "Could not start (connection error)"; });
+    });
+
+    pidTuneCancelButton.addEventListener("click", function () {
+      fetch("/pidTune?action=cancel", { method: "POST" }).catch(console.error);
+    });
+
+    pollPidTune();
 
     // ---- Firmware upload: sends the chosen .bin, shows progress, then waits
     // for the device to reboot and reloads the page.

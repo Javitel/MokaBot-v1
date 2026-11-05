@@ -138,6 +138,13 @@ void calculateLabels(void *param){
       bloomText = (getBloomTime() == -1) ? String("OFF") : formatValue(getBloomTime(), "Bloom: ", "s");
       brewText = formatValue(getBrewTime(), "Brew: ", "s");
     }
+    else if(status == 4){
+      // PID calibration: its target and progress.
+      targetText = formatTemp(pidTuneTarget(), "");
+      extraText = pidTuneMessage();
+      bloomText="";
+      brewText="";
+    }
     else if(status == 3){
       targetText = String(getManualPower()) + "%";
       extraText = "ON";
@@ -146,7 +153,11 @@ void calculateLabels(void *param){
     }
     else{
       targetText = "OFF";
-      extraText="";
+      // The last extraction ended by itself (see getBrewStopReason()).
+      extraText = getBrewStopReason() == BREW_STOP_LOW_WATER ? "Ended: low water"
+                : getBrewStopReason() == BREW_STOP_OVERSHOOT ? "Ended: overshoot" : "";
+      // Result of a PID calibration that just finished or stopped.
+      if(pidTunePhase() == PID_TUNE_DONE || pidTunePhase() == PID_TUNE_FAILED) extraText = pidTuneMessage();
       bloomText="";
       brewText="";
     }
@@ -190,7 +201,8 @@ void calculateLabels(void *param){
           profileStatusText = (isnan(preheat) ? String("--") : formatTemp(preheat, "")) + "\noff";
         }
         // Ended early: the boiler ran low on water.
-        if(status == 0 && profileStoppedByOvershoot()) extraText = "Ended: overshoot";
+        if(status == 0 && getBrewStopReason() == BREW_STOP_OVERSHOOT) extraText = "Ended: overshoot";
+        if(status == 0 && getBrewStopReason() == BREW_STOP_LOW_WATER) extraText = "Ended: low water";
         if(brewProfileNeedsPreheat(profile)) extractText = "PREHEAT";
       }
     }
@@ -254,7 +266,9 @@ void setup() {
   // touch task; LVGL drawing and label updates alone on CORE_UI.
   // Records the brew curve for the brew page (before the web server starts).
   brewHistoryStart();
-  xTaskCreatePinnedToCore(process, "process",2048, NULL, 5, &PIDTask, CORE_UI);
+  // 4096: the PID calibration's float maths and printf overflowed 2048
+  // ("Stack canary watchpoint triggered (process)").
+  xTaskCreatePinnedToCore(process, "process",4096, NULL, 5, &PIDTask, CORE_UI);
   xTaskCreatePinnedToCore(updateSensors, "sensors",4096, NULL, 5, &SensorTask, CORE_I2C);
   // 4096: the BMP read path plus ESP-IDF's I2C error logging (printf)
   // overflowed 2048 ("Stack canary watchpoint triggered (pressure)").

@@ -55,10 +55,10 @@ double preheatOffset = -2;
 #define PREHEAT_OFFSET_MIN -10.0
 #define PREHEAT_OFFSET_MAX 0.0
 
-// Profile extraction: once the target has been reached (targetReached), a
-// temperature more than this above it means the boiler is running low on
-// water (less water, the PID overshoots) and the brew ends. Saved in
-// Preferences, set from the settings page.
+// Extraction (normal or profile): once the target has been reached
+// (targetReached), a temperature more than this above it means the boiler is
+// running low on water (less water, the PID overshoots) and the brew ends.
+// Saved in Preferences, set from the settings page.
 double overshootMargin = 2;
 #define OVERSHOOT_MARGIN_MIN 0.5
 #define OVERSHOOT_MARGIN_MAX 10.0
@@ -101,12 +101,25 @@ double current = 0.0;
 int mokaStatus = 0;
 bool connected=false;
 
-double defaultp = 10.2;//0.03 0.003;
+// Defaults from a PID calibration on the WT32-SC01 moka (heating rate 0.412
+// C/s, dead time 22.8 s; held 95 C within +-0.1 C without overshoot, D 0).
+double defaultp = 13.31;
 // I setting: integral gain per degree of (target - room temperature); the
-// PID's Ki is scheduled as i * delta (see estimateIntegral). ~0.7 was measured
-// stable at a delta of ~70 C, hence 0.01.
-double defaulti = 0.006;
-double defaultd = 0.85;//0.000002;
+// PID's Ki is scheduled as i * delta (see estimateIntegral).
+double defaulti = 0.00109;
+double defaultd = 0;
+
+// Earlier defaults {P, I, D}. Saving the settings page stores the values it
+// shows, so a device that never changed them may hold one of these: it means
+// "the default" and follows the current one.
+static const double OLD_DEFAULT_PIDS[][3] = {
+  { 10.2, 0.006, 0.85 },     // 1.0.2 - 1.0.3
+  { 40.2, 0.01, 0.085 },     // earlier builds
+};
+
+static bool sameValue(double a, double b){
+  return fabs(a - b) <= 1e-6 + 1e-4 * fabs(b);
+}
 
 double p, i, d;  
 
@@ -128,10 +141,189 @@ static volatile bool calibrationHeating = false;
 // profileTarget instead of the bloom and boiling targets.
 static volatile bool profileBrew = false;
 static volatile double profileTarget = 0;
-// Overshoot check of a profile brew (see checkProfileOvershoot).
+// End-of-brew checks of an extraction (see checkBrewEnd).
 static bool targetReached = false;
 static double reachedTarget = NAN;               // target targetReached refers to
-static volatile bool overshootStopped = false;   // last profile brew ended by it
+static volatile int brewStopReason = BREW_STOP_NONE;   // why the last extraction ended
+
+// ---- Low water detection --------------------------------------------------
+// The boiler's heat balance: C dT/dt = P u - k (T - Ta), u = heater duty. Less
+// water means a smaller heat capacity C, so the heating gain a = P/C (C/s at
+// full power) grows. a is fitted continuously (recursive least squares over
+// WATER_WINDOW_MS windows of dT = a * sum(u dt) - b * sum((T - Ta) dt)); its
+// ratio to the value at the start of the extraction, a/a0, estimates how much
+// faster the boiler heats than when it was full.
+#define WATER_WINDOW_MS        5000
+#define WATER_FORGETTING       0.9      // per window: about the last 50 s count
+#define WATER_REF_WINDOWS      6        // windows (30 s) to learn a0 without a preheat
+#define WATER_HIGH_WINDOWS     2        // ratio above the limit for 2 windows (10 s)
+#define FREE_HEATING_RATE      0.4      // C/s rise...
+#define FREE_HEATING_DUTY      0.2      // ...with less than 20 % duty: nothing left to heat
+// Gain ratio that ends an extraction (0 = off). Saved in Preferences. Off by
+// default until tuned with logged brews: in a simulation the pot's metal
+// holds about as much heat as the water (an empty boiler only heats ~x2
+// faster), a steadily held temperature shows no change at all, and probe lag
+// makes the estimate drift.
+double lowWaterRatio = 0;
+#define LOW_WATER_RATIO_MIN 1.2
+#define LOW_WATER_RATIO_MAX 5.0
+
+static volatile float heaterDuty = 0;     // on-time fraction of the last window
+static double waterTheta[2] = { 0, 0 };   // a, b
+static double waterP[2][2];
+static int waterWindows = 0;              // fitted windows since the reset
+static double windowU = 0, windowL = 0, windowStartTemp = NAN, windowTarget = NAN;
+static uint32_t windowStartMs = 0, windowLastMs = 0;
+static double gainRef = NAN;              // a0
+static double refSum = 0;
+static int refCount = 0;
+static int highWindows = 0;
+static volatile float waterGainRatio = NAN;
+
+// PID calibration target = boiling point + this. Saved in Preferences.
+#define PID_TUNE_OFFSET_MIN  -15.0
+#define PID_TUNE_OFFSET_MAX  0.0
+double pidTuneOffset = -5;
+
+static double clampPidTuneOffset(double degrees){
+  if(degrees < PID_TUNE_OFFSET_MIN) return PID_TUNE_OFFSET_MIN;
+  if(degrees > PID_TUNE_OFFSET_MAX) return PID_TUNE_OFFSET_MAX;
+  return degrees;
+}
+
+static double clampLowWaterRatio(double ratio){
+  if(ratio <= 0) return 0;
+  if(ratio < LOW_WATER_RATIO_MIN) return LOW_WATER_RATIO_MIN;
+  if(ratio > LOW_WATER_RATIO_MAX) return LOW_WATER_RATIO_MAX;
+  return ratio;
+}
+
+// New preheat or brew: the fit starts over.
+static void waterReset(){
+  waterTheta[0] = waterTheta[1] = 0;
+  waterP[0][0] = waterP[1][1] = 1e4;
+  waterP[0][1] = waterP[1][0] = 0;
+  waterWindows = 0;
+  windowStartTemp = NAN;
+  gainRef = NAN;
+  refSum = 0;
+  refCount = 0;
+  highWindows = 0;
+  waterGainRatio = NAN;
+}
+
+// Extraction starts: a0 is the gain fitted during the preheat, or (without
+// one) the average of the first WATER_REF_WINDOWS windows.
+static void waterExtractionStart(){
+  gainRef = (waterWindows >= WATER_REF_WINDOWS && waterTheta[0] > 0) ? waterTheta[0] : NAN;
+  refSum = 0;
+  refCount = 0;
+  highWindows = 0;
+  waterGainRatio = NAN;
+}
+
+// One recursive least squares step: y = theta . x.
+static void waterFit(double x0, double x1, double y){
+  double px0 = waterP[0][0] * x0 + waterP[0][1] * x1;
+  double px1 = waterP[1][0] * x0 + waterP[1][1] * x1;
+  double denominator = WATER_FORGETTING + x0 * px0 + x1 * px1;
+  if(denominator <= 0) return;
+  double k0 = px0 / denominator, k1 = px1 / denominator;
+  double error = y - (waterTheta[0] * x0 + waterTheta[1] * x1);
+  waterTheta[0] += k0 * error;
+  waterTheta[1] += k1 * error;
+  double xp0 = x0 * waterP[0][0] + x1 * waterP[1][0];
+  double xp1 = x0 * waterP[0][1] + x1 * waterP[1][1];
+  waterP[0][0] = (waterP[0][0] - k0 * xp0) / WATER_FORGETTING;
+  waterP[0][1] = (waterP[0][1] - k0 * xp1) / WATER_FORGETTING;
+  waterP[1][0] = (waterP[1][0] - k1 * xp0) / WATER_FORGETTING;
+  waterP[1][1] = (waterP[1][1] - k1 * xp1) / WATER_FORGETTING;
+}
+
+// Called after each PID window while preheating or extracting. Returns true
+// (once per window) with the window's mean rise rate and duty filled in.
+static bool waterEstimateStep(double *rate, double *duty){
+  uint32_t now = millis();
+  float ambient = getAmbientTemp();
+  if(isnan(ambient) || ambient < -20 || ambient > 60) ambient = 25;
+  if(isnan(windowStartTemp)){
+    windowStartTemp = current;
+    windowTarget = target;
+    windowStartMs = windowLastMs = now;
+    windowU = windowL = 0;
+    return false;
+  }
+  double dt = (now - windowLastMs) / 1000.0;
+  windowLastMs = now;
+  windowU += heaterDuty * dt;
+  windowL += (current - ambient) * dt;
+  if(now - windowStartMs < WATER_WINDOW_MS) return false;
+
+  double seconds = (now - windowStartMs) / 1000.0;
+  double rise = current - windowStartTemp;
+  // A target change (bloom -> boil, a profile step) jumps the duty: skipped.
+  if(target == windowTarget){
+    waterFit(windowU, -windowL, rise);
+    waterWindows++;
+  }
+  *rate = rise / seconds;
+  *duty = windowU / seconds;
+  windowStartTemp = current;
+  windowTarget = target;
+  windowStartMs = now;
+  windowU = windowL = 0;
+
+  if(mokaStatus == 2){
+    if(isnan(gainRef) && waterTheta[0] > 0 && waterWindows > 0){
+      refSum += waterTheta[0];
+      if(++refCount >= WATER_REF_WINDOWS) gainRef = refSum / refCount;
+    }
+    if(!isnan(gainRef) && gainRef > 0) waterGainRatio = waterTheta[0] / gainRef;
+  }
+  return true;
+}
+
+static void endBrew(int reason, const char *why){
+  Serial.printf("Brew ended: %s\n", why);
+  setMokaStatus(0);
+  brewStopReason = reason;
+}
+
+// End of an extraction (normal or profile), checked after each PID window:
+//  1. gain ratio a/a0 above lowWaterRatio for WATER_HIGH_WINDOWS windows;
+//  2. free heating: rising fast with almost no heater duty;
+//  3. overshoot: once the target is reached, more than overshootMargin above
+//     it. A new target (bloom -> boil, a step of a profile) has to be reached
+//     again; after a step down that means cooling into the band first.
+// Rules 1 and 2 are off when lowWaterRatio is 0.
+static void checkBrewEnd(bool windowDone, double rate, double duty){
+  if(windowDone && lowWaterRatio > 0){
+    float ratio = waterGainRatio;
+    highWindows = (!isnan(ratio) && ratio > lowWaterRatio) ? highWindows + 1 : 0;
+    if(highWindows >= WATER_HIGH_WINDOWS){
+      char why[64];
+      snprintf(why, sizeof(why), "low water (gain x%.1f)", ratio);
+      return endBrew(BREW_STOP_LOW_WATER, why);
+    }
+    if(targetReached && rate > FREE_HEATING_RATE && duty < FREE_HEATING_DUTY){
+      char why[64];
+      snprintf(why, sizeof(why), "low water (%.2f C/s at %.0f %% duty)", rate, duty * 100);
+      return endBrew(BREW_STOP_LOW_WATER, why);
+    }
+  }
+  if(target != reachedTarget){
+    targetReached = false;
+    reachedTarget = target;
+  }
+  if(!targetReached){
+    if(current >= target && current <= target + overshootMargin) targetReached = true;
+  }
+  else if(current > target + overshootMargin){
+    char why[64];
+    snprintf(why, sizeof(why), "overshoot (%.1f C > %.1f + %.1f C)", current, target, overshootMargin);
+    endBrew(BREW_STOP_OVERSHOOT, why);
+  }
+}
 
 int getrelayStatus(int status){
   if (status == LOW){
@@ -179,7 +371,7 @@ int getrelayStatus(int status){
         }
       }
 
-      vTaskDelay( pdMS_TO_TICKS( 15));//delay(10);
+      vTaskDelay( pdMS_TO_TICKS( 17));//delay(10);
     }
     // No valid sample: NAN, the caller skips this reading.
     if(valid == 0) return NAN;
@@ -227,6 +419,15 @@ void recoverPid(){
   // per-degree factor would almost disable the integral.
   i = MokaPreferences.getFloat("kiPerDegree", defaulti);
   d = MokaPreferences.getFloat("savedD", defaultd);
+  for(size_t k = 0; k < sizeof(OLD_DEFAULT_PIDS) / sizeof(OLD_DEFAULT_PIDS[0]); k++){
+    if(sameValue(p, OLD_DEFAULT_PIDS[k][0]) && sameValue(i, OLD_DEFAULT_PIDS[k][1]) &&
+       sameValue(d, OLD_DEFAULT_PIDS[k][2])){
+      p = defaultp;
+      i = defaulti;
+      d = defaultd;
+      break;
+    }
+  }
 }
 void recoverResistors(){
   resistorFixed = MokaPreferences.getFloat("resistorFixed", resistorFixed);
@@ -245,6 +446,8 @@ void recoverBrewSettings(){
   manualCutoffAboveBoiling = clampManualCutoff(MokaPreferences.getInt("cutoffAbove", manualCutoffAboveBoiling));
   preheatOffset = clampPreheatOffset(MokaPreferences.getFloat("preheatOffset", preheatOffset));
   overshootMargin = clampOvershootMargin(MokaPreferences.getFloat("overshoot", overshootMargin));
+  lowWaterRatio = clampLowWaterRatio(MokaPreferences.getFloat("lowWaterRatio", lowWaterRatio));
+  pidTuneOffset = clampPidTuneOffset(MokaPreferences.getFloat("pidTuneOffset", pidTuneOffset));
 
 }
 
@@ -297,25 +500,245 @@ float getHeatingLimit(){
   return limit < MAX_HEATING_TARGET ? limit : MAX_HEATING_TARGET;
 }
 
-// Profile brew: targetReached is set once the temperature gets to the target
-// (from below, into target..target + overshootMargin); after that, going
-// above target + overshootMargin ends the brew. A new target (bloom -> boil,
-// a step of the saved curve) has to be reached again; after a step down
-// that means cooling into the band first.
-static void checkProfileOvershoot(){
-  if(target != reachedTarget){
-    targetReached = false;
-    reachedTarget = target;
-  }
-  if(!targetReached){
-    if(current >= target && current <= target + overshootMargin) targetReached = true;
-  }
-  else if(current > target + overshootMargin){
-    Serial.printf("Profile overshoot (%.1f C > %.1f + %.1f C): low water, ending the brew\n",
-                  current, target, overshootMargin);
+// ---- PID calibration (status 4) -------------------------------------------
+// Step-response tuning (SIMC rules for an integrating process with dead time):
+// from water at most PID_TUNE_START_ABOVE_ROOM above the room, the heater runs at full power (the PID is
+// bang-bang more than 12 C below its target). The rise from start + 3 C to
+// start + 13 C gives the heating rate R (C/s at full power) and, from where
+// that line crosses the start temperature, the dead time theta (probe and
+// heat-up delay). Then
+//   Kc = 1 / (2 R theta)  (per C of error, as a duty fraction)
+//   Ti = 8 theta
+// in AutoPID's units (output = ms of the 250 ms window): P = 250 Kc,
+// Ki = P / Ti, and the I setting is per degree of (target - room): I = Ki /
+// (target - room). Td = theta / 2: D = P Td, times 1e6 because AutoPID
+// divides its derivative by the step in ms and again by 1000.
+// Refinement: those gains bring the water to target - PID_TUNE_REFINE_STEPS *
+// PID_TUNE_REFINE_STEP and hold it; then PID_TUNE_REFINE_STEPS steps of
+// PID_TUNE_REFINE_STEP up to the target are timed. After each step:
+//  - overshoot above PID_TUNE_MAX_OVERSHOOT: P x0.75, integral 30 % slower;
+//  - otherwise, settling slower than 4 theta: P x1.25 (at most 2x the computed P);
+//  - a step that oscillates (crosses the setpoint 3+ times) drops D to 0.
+// D follows P. The gains of the fastest step without overshoot are saved once
+// the final step holds within +-PID_TUNE_BAND for PID_TUNE_STABLE_MS.
+#define PID_TUNE_START_ABOVE_ROOM 10.0   // C: start condition
+#define PID_TUNE_RISE_START  3.0
+#define PID_TUNE_RISE_END    13.0
+#define PID_TUNE_BAND        0.4
+#define PID_TUNE_STABLE_MS   60000UL          // final hold
+#define PID_TUNE_STEP_STABLE_MS 30000UL       // a refinement step is settled
+#define PID_TUNE_STEP_MAX_MS (8UL * 60 * 1000) // a step that takes longer counts as slow
+#define PID_TUNE_TIMEOUT_MS  (45UL * 60 * 1000)
+#define PID_TUNE_REFINE_STEPS 3
+#define PID_TUNE_REFINE_STEP  1.5
+#define PID_TUNE_MAX_OVERSHOOT 0.2
+
+static volatile int pidTuneState = PID_TUNE_IDLE;
+static char pidTuneText[64] = "";
+static double tuneStartTemp = 0, tuneTargetTemp = 0, savedP = 0, savedI = 0, savedD = 0;
+static uint32_t tuneStartMs = 0, tuneRiseMs = 0, tuneStableSince = 0;
+// Refinement (see above): step 0 = holding below the target, then 1..STEPS.
+static int tuneStep = 0, tuneCrossings = 0, tuneSide = 0;
+static double tuneSetpoint = 0, tuneStepMax = 0, tuneTheta = 0, tuneBaseP = 0;
+static uint32_t tuneStepStart = 0;
+static double bestP = 0, bestI = 0, bestD = 0, bestSettle = -1;
+
+static bool pidTuneRunning(){
+  return pidTuneState == PID_TUNE_HEATING || pidTuneState == PID_TUNE_SETTLING;
+}
+
+float pidTuneTarget(){
+  float limit = floorf(currentBoilingPoint() + pidTuneOffset);
+  return limit < MAX_HEATING_TARGET ? limit : MAX_HEATING_TARGET;
+}
+
+bool pidTuneReady(){
+  float ambient = getAmbientTemp();
+  return mokaStatus == 0 && !isnan(current) && current > -127.0 && !isnan(ambient) &&
+         current <= ambient + PID_TUNE_START_ABOVE_ROOM;
+}
+
+bool pidTuneStart(){
+  if(!pidTuneReady()) return false;
+  savedP = p;
+  savedI = i;
+  savedD = d;
+  tuneStartTemp = current;
+  tuneTargetTemp = pidTuneTarget();
+  setMokaStatus(4);
+  target = tuneTargetTemp;
+  estimateIntegral();
+  tuneStartMs = millis();
+  tuneRiseMs = 0;
+  tuneStableSince = 0;
+  pidTuneState = PID_TUNE_HEATING;
+  snprintf(pidTuneText, sizeof(pidTuneText), "PID: heating, measuring");
+  Serial.printf("PID calibration: from %.1f C to %.0f C\n", current, tuneTargetTemp);
+  return true;
+}
+
+// Cancelled or failed: the previous gains come back.
+static void pidTuneFail(const char *why){
+  if(!pidTuneRunning()) return;
+  p = savedP;
+  i = savedI;
+  d = savedD;
+  estimateIntegral();
+  pidTuneState = PID_TUNE_FAILED;
+  snprintf(pidTuneText, sizeof(pidTuneText), "PID: %s", why);
+  Serial.printf("PID calibration: %s\n", why);
+}
+
+void pidTuneCancel(){
+  pidTuneFail("cancelled");
+  if(mokaStatus == 4) setMokaStatus(0);
+}
+
+int pidTunePhase(){
+  return pidTuneState;
+}
+
+const char * pidTuneMessage(){
+  return pidTuneText;
+}
+
+void setPidTuneOffset(double degrees){
+    prefsLock(); MokaPreferences.begin("my-app", false);
+    pidTuneOffset = clampPidTuneOffset(degrees);
+    MokaPreferences.putFloat("pidTuneOffset", pidTuneOffset);
+    MokaPreferences.end(); prefsUnlock();
+}
+
+double getPidTuneOffset(){
+  return pidTuneOffset;
+}
+
+// After each PID window in status 4.
+static void pidTuneStartStep(int step, uint32_t now){
+  tuneStep = step;
+  tuneSetpoint = tuneTargetTemp - (PID_TUNE_REFINE_STEPS - step) * PID_TUNE_REFINE_STEP;
+  tuneStepStart = now;
+  tuneStepMax = current;
+  tuneCrossings = 0;
+  tuneSide = 0;
+  tuneStableSince = 0;
+}
+
+// Scales P (and D with it) and the integral after a refinement step.
+static void pidTuneScale(double pFactor, double integralFactor){
+  double newP = p * pFactor;
+  if(newP > 2 * tuneBaseP) newP = 2 * tuneBaseP;
+  double applied = newP / p;
+  p = newP;
+  d *= applied;
+  i *= applied * integralFactor;
+  estimateIntegral();
+}
+
+// After each PID window in status 4.
+static void pidTuneStep(){
+  uint32_t now = millis();
+  if(now - tuneStartMs > PID_TUNE_TIMEOUT_MS){
+    pidTuneFail("timed out");
     setMokaStatus(0);
-    overshootStopped = true;
+    return;
   }
+  if(pidTuneState == PID_TUNE_HEATING){
+    target = tuneTargetTemp;
+    if(tuneRiseMs == 0 && current >= tuneStartTemp + PID_TUNE_RISE_START) tuneRiseMs = now;
+    if(tuneRiseMs == 0 || current < tuneStartTemp + PID_TUNE_RISE_END) return;
+    double rate = (PID_TUNE_RISE_END - PID_TUNE_RISE_START) / ((now - tuneRiseMs) / 1000.0);
+    double theta = (tuneRiseMs - tuneStartMs) / 1000.0 - PID_TUNE_RISE_START / rate;
+    if(theta < 1) theta = 1;
+    double kc = 1.0 / (2 * rate * theta);
+    double newP = timeWindow * kc;
+    double ki = newP / (8 * theta);
+    float ambient = getAmbientTemp();
+    double delta = tuneTargetTemp - (isnan(ambient) ? 25 : ambient);
+    double newI = delta > 1 ? ki / delta : 0;
+    double newD = newP * (theta / 2) * 1e6;
+    Serial.printf("PID calibration: R %.3f C/s, dead time %.1f s -> P %.2f, I %.5f, D %.0f\n",
+                  rate, theta, newP, newI, newD);
+    if(!(newP >= 1 && newP <= 500 && newI > 0 && newI <= 1)){
+      pidTuneFail("implausible result");
+      setMokaStatus(0);
+      return;
+    }
+    p = newP;
+    i = newI;
+    d = newD;
+    tuneTheta = theta;
+    tuneBaseP = newP;
+    bestSettle = -1;
+    pidTuneState = PID_TUNE_SETTLING;
+    pidTuneStartStep(0, now);
+    target = tuneSetpoint;
+    estimateIntegral();
+    snprintf(pidTuneText, sizeof(pidTuneText), "PID: P %.1f I %.4f, to %.1f C", p, i, tuneSetpoint);
+    return;
+  }
+  if(pidTuneState != PID_TUNE_SETTLING) return;
+
+  target = tuneSetpoint;
+  if(current > tuneStepMax) tuneStepMax = current;
+  // Setpoint crossings (0.05 C hysteresis) tell an oscillating step.
+  double error = current - tuneSetpoint;
+  int side = error > 0.05 ? 1 : (error < -0.05 ? -1 : tuneSide);
+  if(tuneSide != 0 && side != tuneSide) tuneCrossings++;
+  tuneSide = side;
+
+  bool finalStep = tuneStep == PID_TUNE_REFINE_STEPS;
+  uint32_t needed = finalStep ? PID_TUNE_STABLE_MS : PID_TUNE_STEP_STABLE_MS;
+  bool tooLong = tuneStep > 0 && now - tuneStepStart > PID_TUNE_STEP_MAX_MS;
+  if(fabs(error) > PID_TUNE_BAND){
+    tuneStableSince = 0;
+    snprintf(pidTuneText, sizeof(pidTuneText), "PID: step %d/%d to %.1f C (%+.1f)",
+             tuneStep, PID_TUNE_REFINE_STEPS, tuneSetpoint, error);
+    if(!tooLong) return;
+  }
+  else{
+    if(tuneStableSince == 0) tuneStableSince = now;
+    uint32_t stable = now - tuneStableSince;
+    snprintf(pidTuneText, sizeof(pidTuneText), "PID: step %d/%d stable %lu/%lu s",
+             tuneStep, PID_TUNE_REFINE_STEPS, stable / 1000, needed / 1000);
+    if(stable < needed && !tooLong) return;
+  }
+
+  if(tuneStep > 0){
+    // Evaluate the step.
+    double overshoot = tuneStepMax - tuneSetpoint;
+    double settle = (tooLong ? now : tuneStableSince) - tuneStepStart;
+    settle /= 1000.0;
+    Serial.printf("PID calibration: step %d with P %.2f I %.5f D %.0f: overshoot %.2f C, settled in %.0f s%s, %d crossings\n",
+                  tuneStep, p, i, d, overshoot, settle, tooLong ? " (too long)" : "", tuneCrossings);
+    if(overshoot <= PID_TUNE_MAX_OVERSHOOT && !tooLong && (bestSettle < 0 || settle < bestSettle)){
+      bestSettle = settle;
+      bestP = p;
+      bestI = i;
+      bestD = d;
+    }
+    if(finalStep){
+      if(bestSettle >= 0){
+        p = bestP;
+        i = bestI;
+        d = bestD;
+      }
+      setPID(p, i, d);   // saved
+      pidTuneState = PID_TUNE_DONE;
+      snprintf(pidTuneText, sizeof(pidTuneText), "PID saved: P %.1f I %.4f D %.0f", p, i, d);
+      Serial.printf("PID calibration: done, %s\n", pidTuneText);
+      setMokaStatus(0);
+      return;
+    }
+    if(tuneCrossings >= 3 && d != 0){
+      d = 0;
+      Serial.println("PID calibration: step oscillated, D = 0");
+    }
+    if(overshoot > PID_TUNE_MAX_OVERSHOOT) pidTuneScale(0.75, 1 / 1.3);
+    else if(tooLong || settle > 4 * tuneTheta) pidTuneScale(1.25, 1);
+  }
+  pidTuneStartStep(tuneStep + 1, now);
+  target = tuneSetpoint;
 }
 
 // Defined with the other manual power functions below.
@@ -332,6 +755,7 @@ BaseType_t xWasDelayed;
      if(current > MAX_SAFE_TEMP){
       // Over-temperature: heater off and moka OFF, in every mode.
       connected=false;
+      heaterDuty = 0;
       digitalWrite(pinHeater,getrelayStatus(LOW));
       if(mokaStatus != 0){
         Serial.printf("Over-temperature (%.1f C > %.0f C): switching off\n", current, MAX_SAFE_TEMP);
@@ -340,6 +764,7 @@ BaseType_t xWasDelayed;
     }
     else if(current <= -127.0 || mokaStatus == 0){
       connected=false;
+      heaterDuty = 0;
       digitalWrite(pinHeater,getrelayStatus(LOW));
       // Manual power has no temperature control: losing the sensor stops it
       // for good instead of resuming when the reading comes back.
@@ -361,7 +786,12 @@ BaseType_t xWasDelayed;
       connected=true;
         if(!running){
     pidUpdate();
-    if(getMokaStatus() == 2 && profileBrew) checkProfileOvershoot();
+    if(getMokaStatus() == 4) pidTuneStep();
+    if(getMokaStatus() == 1 || getMokaStatus() == 2){
+      double rate = 0, duty = 0;
+      bool windowDone = waterEstimateStep(&rate, &duty);
+      if(getMokaStatus() == 2) checkBrewEnd(windowDone, rate, duty);
+    }
     if(getMokaStatus() == 2 && brewstart == false && (current) >= getCalibratedTemp()+ bloomOffset){
       brewstart = true;
       startTime = millis() - elapsedTime;
@@ -481,8 +911,27 @@ double getOvershootMargin(){
   return overshootMargin;
 }
 
-bool profileStoppedByOvershoot(){
-  return overshootStopped;
+int getBrewStopReason(){
+  return brewStopReason;
+}
+
+float getHeaterDuty(){
+  return heaterDuty;
+}
+
+float getWaterGainRatio(){
+  return waterGainRatio;
+}
+
+void setLowWaterRatio(double ratio){
+    prefsLock(); MokaPreferences.begin("my-app", false);
+    lowWaterRatio = clampLowWaterRatio(ratio);
+    MokaPreferences.putFloat("lowWaterRatio", lowWaterRatio);
+    MokaPreferences.end(); prefsUnlock();
+}
+
+double getLowWaterRatio(){
+  return lowWaterRatio;
 }
 
 void calibrationHeatingOn(){
@@ -570,6 +1019,7 @@ void profileBrewOn(float firstTarget){
 // One time window in manual mode: heater on for manualPowerPercent of it.
 static void manualPowerUpdate(){
   running = true;
+  heaterDuty = manualPowerPercent / 100.0;
   double onTime = timeWindow * manualPowerPercent / 100.0;
   if(onTime > 0){
     digitalWrite(pinHeater,getrelayStatus(HIGH));
@@ -586,6 +1036,8 @@ static void manualPowerUpdate(){
    running = true;
    temperature=current;
    myPID.run();
+   double onTime = pidValue * gain;
+   heaterDuty = onTime <= 0 ? 0 : (onTime >= timeWindow ? 1 : onTime / timeWindow);
     //if(pidValue>0){
      digitalWrite(pinHeater,getrelayStatus(HIGH));
      vTaskDelay( pdMS_TO_TICKS( pidValue * gain ));//}
@@ -613,7 +1065,7 @@ static int readNtc(double *tempOut, double *ntcReadOut){
   // Read both channels first; if either failed (NAN), no temperature is
   // computed from bad data.
   double refRead = averageADSRead(3,5, 25, refVoltage);//ads.readADC_Differential_1_3();//
-  double ntcRead = averageADSRead(0,10, 100, ntcValue);//ads.readADC_Differential_0_3();//
+  double ntcRead = averageADSRead(0,8, 100, ntcValue);//ads.readADC_Differential_0_3();//
   if(isnan(refRead) || isnan(ntcRead)) return NTC_READ_FAILED;
   refVoltage = refRead;
   //refVoltage= refVoltage * 0.1875/1000;  f
@@ -701,7 +1153,13 @@ void setMokaStatus(int status){
   calibrationHeating = false;
   targetReached = false;
   reachedTarget = NAN;
-  overshootStopped = false;
+  brewStopReason = BREW_STOP_NONE;
+  // Leaving the PID calibration any other way cancels it (OFF, another mode,
+  // over-temperature); a new brew clears its last result.
+  if(status != 4) pidTuneFail("cancelled");
+  if(status != 0 && status != 4 && !pidTuneRunning()) pidTuneState = PID_TUNE_IDLE;
+  if(status == 2) waterExtractionStart();
+  else waterReset();
   if(status == 1 || status == 0 || status == 3){
     brewstart = false;
     bloomfinished = false;
@@ -767,6 +1225,22 @@ void setPID(double newP, double newI, double newD){
   estimateIntegral();
   MokaPreferences.end(); prefsUnlock(); 
 }
+// Back to the firmware's default P, I and D: the stored ones are removed, so
+// a later firmware with other defaults applies them too.
+void resetPidDefaults(){
+  prefsLock(); MokaPreferences.begin("my-app", false);
+  MokaPreferences.remove("savedP");
+  MokaPreferences.remove("kiPerDegree");
+  MokaPreferences.remove("savedD");
+  p = defaultp; i = defaulti; d = defaultd;
+  estimateIntegral();
+  MokaPreferences.end(); prefsUnlock();
+}
+
+void getDefaultPID(double *pid){
+  pid[0] = defaultp; pid[1] = defaulti; pid[2] = defaultd;
+}
+
 void setResistorValues(double newR, double newA, double newB, double newC){
   prefsLock(); MokaPreferences.begin("my-app", false);
   // Applied right away (not only saved), so the temperature reading and the

@@ -1,5 +1,6 @@
 #if defined(BOARD_WAVESHARE_S3_TOUCH_LCD_35B)
 
+#include "devices/i2cRecover.hpp"
 #include <Arduino.h>
 #include <Wire.h>
 #include <Arduino_GFX_Library.h>
@@ -209,6 +210,7 @@ static void my_touch_read(lv_indev_drv_t *indev_driver, lv_indev_data_t *data) {
 }
 
 void displayInit(){
+  i2cBusRecover(I2C_SDA, I2C_SCL);
   Wire.begin(I2C_SDA, I2C_SCL);
   resetPanel();
 

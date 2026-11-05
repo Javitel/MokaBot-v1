@@ -49,7 +49,7 @@ int brewProfileElapsed(void);
 // JSON for GET /brewHistory?session=S&from=N:
 // {"session":S,"mode":2|3,"active":true|false,"status":N,
 //  "profile":"A"|"B"|"C"|null (saved brew this session replays),"next":M,
-//  "samples":[[seconds,tempC|null,pressureBar|null,targetC|null],...]}
+//  "samples":[[seconds,tempC|null,pressureBar|null,targetC|null,duty%|null,gainRatio|null],...]}
 // Pressure and target are recorded for extractions only (null in manual
 // power, which has no PID).
 // Samples start at index N when S is the current session, otherwise at the
@@ -71,8 +71,9 @@ enum BrewSlotResult {
 BrewSlotResult brewHistorySaveSlot(char slot);
 // Writes an imported brew into slot 'A', 'B' or 'C' (overwriting it). mode is
 // 2 or 3, power the manual power percentage (0 = not recorded); text holds
-// one sample per line, "seconds tempDeci pressureMbar targetDeci" (0.1 C,
-// mbar; -32768 / 0 for no value, as BrewSample). Only while the moka is OFF.
+// one sample per line, "seconds tempDeci pressureMbar targetDeci [duty
+// gainTenths]" (0.1 C, mbar, %, ratio x10; -32768 / 0 / 255 / 0 for no value,
+// as BrewSample). Only while the moka is OFF.
 BrewSlotResult brewHistoryImportSlot(char slot, int mode, int power, const char *text);
 // Deletes the brew saved in slot 'A', 'B' or 'C'. Returns BREW_SLOT_SAVED on
 // success (also when the slot was already empty), BREW_SLOT_INVALID or

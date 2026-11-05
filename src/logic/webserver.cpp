@@ -140,13 +140,32 @@ static bool connectWiFi(const String &ssid, const String &pass){
   return WiFi.status() == WL_CONNECTED;
 }
 
+// Boards built with MOKA_BLE_ONLY_WITHOUT_WIFI (WT32-SC01): Bluetooth only
+// runs while WiFi is off, as both do not fit in its internal RAM. Starting
+// WiFi stops Bluetooth; switching WiFi off frees the WiFi driver's memory and
+// starts Bluetooth again. Elsewhere both run together.
+static void wifiStarting(){
+#ifdef MOKA_BLE_ONLY_WITHOUT_WIFI
+  bleStop();
+#endif
+}
+
+static void wifiStopped(){
+  WiFi.disconnect();
+  ip = "Disconnected";
+#ifdef MOKA_BLE_ONLY_WITHOUT_WIFI
+  WiFi.mode(WIFI_OFF);
+  bleStart();
+#endif
+}
+
 int initNet() {
   if(WiFi.isConnected()){
-    WiFi.disconnect();
-    ip = "Disconnected";
+    wifiStopped();
     return 0;
   }
 
+  wifiStarting();
   // Must be set before the station starts to be used in the DHCP request.
   WiFi.setHostname(getDeviceName());
 
@@ -168,10 +187,11 @@ int initNet() {
     bleStop();
     Serial.printf("Provisioning: free heap %u\n", (unsigned)ESP.getFreeHeap());
     provisioningWifi();
+#ifndef MOKA_BLE_ONLY_WITHOUT_WIFI
     bleStart();
+#endif
     if(provisioningCancelled){
-      WiFi.disconnect();
-      ip = "Disconnected";
+      wifiStopped();
       return -1;
     }
     connected = WiFi.status() == WL_CONNECTED;
@@ -343,8 +363,7 @@ void serverStart(){
 }
 
 void resetWiFi(){
-  WiFi.disconnect();
-  ip = "Disconnected";
+  wifiStopped();
   prefsLock(); preferencesWS.begin("my-app", false);
   preferencesWS.putString("SSID", "");
   preferencesWS.putString("Password", "");

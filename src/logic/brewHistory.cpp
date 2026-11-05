@@ -11,13 +11,18 @@
 #define STATUS_BREWING           2
 #define STATUS_MANUAL_POWER      3
 
-// Compact sample: 8 bytes, 900 samples ~ 7.2 KB.
+// Compact sample: 10 bytes, 900 samples ~ 9 KB.
+#define DUTY_UNKNOWN 255
 typedef struct {
   uint16_t seconds;        // since the session started
   int16_t  tempDeci;       // 0.1 C; INT16_MIN = no valid reading
   uint16_t pressureMbar;   // 0 = not recorded (manual power)
   int16_t  targetDeci;     // PID target, 0.1 C; INT16_MIN = none (manual power)
+  uint8_t  duty;           // heater on-time, %; DUTY_UNKNOWN = not recorded
+  uint8_t  gainTenths;     // water gain ratio (see getWaterGainRatio) x10; 0 = unknown
 } BrewSample;
+// Saved slots written before duty and gain were recorded: the first 8 bytes.
+#define SAMPLE_V1_SIZE 8
 
 static BrewSample samples[BREW_HISTORY_CAPACITY];
 static long totalSamples = 0;    // samples recorded this session (index of the next one)
@@ -33,7 +38,9 @@ static SemaphoreHandle_t historyMutex = NULL;
 // One file per slot in the SPIFFS partition (unused since the web pages are
 // embedded in the firmware; NVS is too small for three brews):
 //   SlotHeader + count x BrewSample
-#define BREW_SLOT_MAGIC 0x31424B4D   // "MKB1"
+// "MKB1" files (older) have 8-byte samples, without duty and gain.
+#define BREW_SLOT_MAGIC_V1 0x31424B4D   // "MKB1"
+#define BREW_SLOT_MAGIC    0x32424B4D   // "MKB2"
 #define BREW_SLOT_FIRST 'A'
 #define BREW_SLOT_LAST  'C'
 
@@ -109,6 +116,9 @@ static void recordSample(int status){
   sample.tempDeci = (isnan(temp) || temp <= -127.0) ? INT16_MIN : (int16_t)lroundf(temp * 10);
   sample.pressureMbar = 0;
   sample.targetDeci = INT16_MIN;
+  sample.duty = (uint8_t)lroundf(getHeaterDuty() * 100);
+  float ratio = getWaterGainRatio();
+  sample.gainTenths = (isnan(ratio) || ratio <= 0) ? 0 : (uint8_t)min(255L, lroundf(ratio * 10));
   if(status == STATUS_BREWING){
     float pressure = brewInternalPressure();
     if(!isnan(pressure) && pressure > 0) sample.pressureMbar = (uint16_t)lroundf(pressure * 1000);
@@ -238,28 +248,38 @@ BrewSlotResult brewHistoryImportSlot(char slot, int mode, int power, const char 
 
   BrewSample *data = (BrewSample *)malloc(BREW_HISTORY_CAPACITY * sizeof(BrewSample));
   if(!data) return BREW_SLOT_FS_ERROR;
-  // One sample per line: seconds tempDeci pressureMbar targetDeci.
+  // One sample per line: seconds tempDeci pressureMbar targetDeci [duty
+  // gainTenths] (files exported before duty and gain had 4 values).
   long count = 0;
   bool valid = true;
   const char *p = text;
   while(valid && *p){
-    char *end;
-    long v[4];
-    for(int k = 0; k < 4 && valid; k++){
-      v[k] = strtol(p, &end, 10);
-      valid = end != p;
-      p = end;
+    const char *lineEnd = strchr(p, '\n');
+    if(!lineEnd) lineEnd = p + strlen(p);
+    long v[6] = { 0, 0, 0, 0, DUTY_UNKNOWN, 0 };
+    int n = 0;
+    const char *q = p;
+    while(n < 6){
+      char *end;
+      long value = strtol(q, &end, 10);
+      if(end == q || end > lineEnd) break;
+      v[n++] = value;
+      q = end;
     }
-    if(!valid) break;
-    while(*p == ' ' || *p == '\r' || *p == '\n' || *p == '\t') p++;
-    valid = count < BREW_HISTORY_CAPACITY &&
+    bool blank = true;
+    for(const char *c = p; c < lineEnd; c++) if(!isspace((unsigned char)*c)) blank = false;
+    p = *lineEnd ? lineEnd + 1 : lineEnd;
+    if(blank) continue;
+    valid = (n == 4 || n == 6) && count < BREW_HISTORY_CAPACITY &&
             v[0] >= 0 && v[0] <= UINT16_MAX &&
             (count == 0 || v[0] >= data[count - 1].seconds) &&
             v[1] >= INT16_MIN && v[1] <= INT16_MAX &&
             v[2] >= 0 && v[2] <= UINT16_MAX &&
-            v[3] >= INT16_MIN && v[3] <= INT16_MAX;
+            v[3] >= INT16_MIN && v[3] <= INT16_MAX &&
+            v[4] >= 0 && v[4] <= 255 && v[5] >= 0 && v[5] <= 255;
     if(!valid) break;
-    data[count++] = { (uint16_t)v[0], (int16_t)v[1], (uint16_t)v[2], (int16_t)v[3] };
+    data[count++] = { (uint16_t)v[0], (int16_t)v[1], (uint16_t)v[2], (int16_t)v[3],
+                      (uint8_t)v[4], (uint8_t)v[5] };
   }
   // An extraction is replayed from its targets: the first one must exist.
   if(valid && (count == 0 || (mode == STATUS_BREWING && data[0].targetDeci == INT16_MIN))) valid = false;
@@ -281,10 +301,21 @@ BrewSlotResult brewHistoryDeleteSlot(char slot){
   return ok ? BREW_SLOT_SAVED : BREW_SLOT_FS_ERROR;
 }
 
-// Reads the header of an open slot file. Leaves the file at the first sample.
-static bool readHeader(File &file, SlotHeader *header){
-  return file.read((uint8_t *)header, sizeof(*header)) == sizeof(*header) &&
-         header->magic == BREW_SLOT_MAGIC && header->count > 0;
+// Reads the header of an open slot file and the size of its samples (older
+// files have shorter ones). Leaves the file at the first sample.
+static bool readHeader(File &file, SlotHeader *header, size_t *sampleSize){
+  if(file.read((uint8_t *)header, sizeof(*header)) != sizeof(*header) || header->count == 0) return false;
+  if(header->magic == BREW_SLOT_MAGIC) *sampleSize = sizeof(BrewSample);
+  else if(header->magic == BREW_SLOT_MAGIC_V1) *sampleSize = SAMPLE_V1_SIZE;
+  else return false;
+  return true;
+}
+
+// Reads one sample of sampleSize bytes; older ones get duty/gain "unknown".
+static bool readSample(File &file, size_t sampleSize, BrewSample *sample){
+  sample->duty = DUTY_UNKNOWN;
+  sample->gainTenths = 0;
+  return file.read((uint8_t *)sample, sampleSize) == sampleSize;
 }
 
 // Reads a slot file's header and duration; false when empty or invalid.
@@ -296,13 +327,14 @@ static bool readSlotHeader(char slot, SlotInfo *info, uint16_t *samplesOut){
   bool found = false;
   File file = SPIFFS.open(path, FILE_READ);
   SlotHeader header;
-  if(file && readHeader(file, &header)){
+  size_t sampleSize;
+  if(file && readHeader(file, &header, &sampleSize)){
     // Preheat temperature = temperature when the brew started (first
     // sample); duration = time of the last sample.
     BrewSample first, last;
-    bool ok = file.read((uint8_t *)&first, sizeof(first)) == sizeof(first);
-    file.seek(sizeof(header) + (header.count - 1) * sizeof(BrewSample));
-    if(ok && file.read((uint8_t *)&last, sizeof(last)) == sizeof(last)){
+    bool ok = readSample(file, sampleSize, &first);
+    file.seek(sizeof(header) + (header.count - 1) * sampleSize);
+    if(ok && readSample(file, sampleSize, &last)){
       info->present = true;
       info->seconds = last.seconds;
       info->mode = header.mode;
@@ -395,13 +427,14 @@ static int16_t *loadSlotTargets(char slot, int seconds){
   if(!file) return NULL;
   int16_t *targets = NULL;
   SlotHeader header;
-  if(readHeader(file, &header)){
+  size_t sampleSize;
+  if(readHeader(file, &header, &sampleSize)){
     targets = (int16_t *)malloc((seconds + 1) * sizeof(int16_t));
     if(targets){
       for(int s = 0; s <= seconds; s++) targets[s] = INT16_MIN;
       BrewSample sample;
       for(uint16_t k = 0; k < header.count; k++){
-        if(file.read((uint8_t *)&sample, sizeof(sample)) != sizeof(sample)) break;
+        if(!readSample(file, sampleSize, &sample)) break;
         if(sample.seconds <= seconds) targets[sample.seconds] = sample.targetDeci;
       }
       int16_t last = INT16_MIN;
@@ -492,7 +525,7 @@ String brewSlotsJson(){
   return json;
 }
 
-// [seconds,tempC|null,pressureBar|null,targetC|null]
+// [seconds,tempC|null,pressureBar|null,targetC|null,duty%|null,gainRatio|null]
 static void appendSampleJson(String &json, const BrewSample &s){
   json += '[';
   json += s.seconds;
@@ -505,6 +538,12 @@ static void appendSampleJson(String &json, const BrewSample &s){
   json += ',';
   if(s.targetDeci == INT16_MIN) json += "null";
   else json += String(s.targetDeci / 10.0, 1);
+  json += ',';
+  if(s.duty == DUTY_UNKNOWN) json += "null";
+  else json += s.duty;
+  json += ',';
+  if(s.gainTenths == 0) json += "null";
+  else json += String(s.gainTenths / 10.0, 1);
   json += ']';
 }
 
@@ -518,7 +557,8 @@ String brewSlotJson(char slot){
   if(!file) return "";
   String json;
   SlotHeader header;
-  if(readHeader(file, &header)){
+  size_t sampleSize;
+  if(readHeader(file, &header, &sampleSize)){
     json.reserve(48 + header.count * 28);
     json += "{\"slot\":\"";
     json += slot;
@@ -529,7 +569,7 @@ String brewSlotJson(char slot){
     json += ",\"samples\":[";
     BrewSample sample;
     for(uint16_t k = 0; k < header.count; k++){
-      if(file.read((uint8_t *)&sample, sizeof(sample)) != sizeof(sample)) break;
+      if(!readSample(file, sampleSize, &sample)) break;
       if(k > 0) json += ',';
       appendSampleJson(json, sample);
     }
