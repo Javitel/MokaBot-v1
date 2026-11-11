@@ -30,6 +30,7 @@ jobs:
       - id: check
         run: bash .github/app-changes.sh
 
+  firmware:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
