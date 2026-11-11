@@ -1,6 +1,8 @@
 # Release: pushing a tag "v<version>" (e.g. v1.0.2, matching
 # custom_firmware_version in platformio.ini) builds the firmware of every
-# board, the Android APK and the unsigned iOS app, and
+# board, the Android APK and the unsigned iOS app (the apps only when their
+# sources changed since the previous release, see .github/app-changes.sh;
+# otherwise the previous release's APK / IPA are attached again), and
 #  - creates the GitHub Release with them (the devices' default OTA folder is
 #    https://github.com/Javitel/MokaBot-v1/releases/latest/download/);
 #  - publishes the web installer (flash.html + the flash images) on GitHub
@@ -13,7 +15,21 @@ on:
       - "v*"
 
 jobs:
-  firmware:
+  # The apps are only rebuilt when their sources changed since the previous
+  # release tag; otherwise that release's APK / IPA are attached again.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      previous: ${{ steps.check.outputs.previous }}
+      android: ${{ steps.check.outputs.android }}
+      ios: ${{ steps.check.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: check
+        run: bash .github/app-changes.sh
+
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -43,17 +59,28 @@ jobs:
           path: build/
 
   android:
+    needs: changes
     runs-on: ubuntu-latest
+    env:
+      BUILD: ${{ needs.changes.outputs.android }}
+      PREVIOUS: ${{ needs.changes.outputs.previous }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - name: Reuse the previous APK (app unchanged)
+        if: env.BUILD != 'true'
+        run: gh release download "$PREVIOUS" -R "$GITHUB_REPOSITORY" -p mokabot.apk
       - uses: actions/setup-java@v4
+        if: env.BUILD == 'true'
         with:
           distribution: temurin
           java-version: "17"
       - uses: gradle/actions/setup-gradle@v4
+        if: env.BUILD == 'true'
         with:
           gradle-version: "8.9"
       - name: Build APK
+        if: env.BUILD == 'true'
         run: |
           gradle -p android assembleDebug
           cp android/app/build/outputs/apk/debug/app-debug.apk mokabot.apk
@@ -63,10 +90,21 @@ jobs:
           path: mokabot.apk
 
   ios:
-    runs-on: macos-15   # Xcode 16: reads the project format of current XcodeGen
+    needs: changes
+    # A Mac only when the app is built (Xcode 16 reads the project format of
+    # current XcodeGen); reusing the previous IPA needs none.
+    runs-on: ${{ needs.changes.outputs.ios == 'true' && 'macos-15' || 'ubuntu-latest' }}
+    env:
+      BUILD: ${{ needs.changes.outputs.ios }}
+      PREVIOUS: ${{ needs.changes.outputs.previous }}
+      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@v4
+      - name: Reuse the previous IPA (app unchanged)
+        if: env.BUILD != 'true'
+        run: gh release download "$PREVIOUS" -R "$GITHUB_REPOSITORY" -p MokaBot-unsigned.ipa
       - name: Build (unsigned)
+        if: env.BUILD == 'true'
         run: |
           brew install xcodegen
           (cd ios && xcodegen generate)

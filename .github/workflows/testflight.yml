@@ -18,7 +18,23 @@ on:
   workflow_dispatch:
 
 jobs:
+  # On a release tag, nothing is uploaded when the iOS app did not change since
+  # the previous release; a run by hand always uploads.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      previous: ${{ steps.check.outputs.previous }}
+      ios: ${{ steps.check.outputs.ios }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: check
+        run: bash .github/app-changes.sh
+
   testflight:
+    needs: changes
+    if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.ios == 'true'
     # App Store Connect only accepts apps built with the iOS 26 SDK (Xcode 26).
     runs-on: macos-26
     env:

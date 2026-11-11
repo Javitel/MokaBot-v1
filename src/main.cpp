@@ -48,17 +48,26 @@ bool LOAD_DEFAULT_CONFIG_DATA = true;
 // left once WiFi is on ("SSL - Memory allocation failed": the update check
 // said "no version file"), so mbedTLS allocates from the 4 MB of PSRAM
 // first, and from internal RAM only when that fails.
-// Only the large record buffers (16 KB each) go to PSRAM: the small crypto
-// contexts stay in internal RAM, where the hardware AES / SHA / bignum units
-// work reliably (with everything in PSRAM, GitHub ended the handshake with a
-// fatal alert).
-#define TLS_PSRAM_MIN_BYTES 4096
+// Crypto contexts stay in internal RAM, where the hardware AES / SHA / bignum
+// units work reliably (with everything in PSRAM, GitHub ended the handshake
+// with a fatal alert). The 16 KB record buffers also go to internal RAM while
+// there is a free block for them and TLS_INTERNAL_RESERVE is left over for
+// WiFi and the other tasks, and to PSRAM otherwise. mbedTLS allocates the incoming buffer first,
+// so it is the one that gets internal RAM: in PSRAM, received data was
+// corrupted during the firmware download ("message MAC failed", the update
+// stalled).
+#define TLS_PSRAM_MIN_BYTES   4096
+#define TLS_INTERNAL_RESERVE  8192
 static void *tlsCalloc(size_t count, size_t size){
-  if(count * size >= TLS_PSRAM_MIN_BYTES){
-    return heap_caps_calloc_prefer(count, size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT,
-                                   MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  size_t bytes = count * size;
+  const uint32_t internal = MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT;
+  if(bytes < TLS_PSRAM_MIN_BYTES) return heap_caps_calloc(count, size, internal);
+  if(heap_caps_get_largest_free_block(internal) >= bytes &&
+     heap_caps_get_free_size(internal) >= bytes + TLS_INTERNAL_RESERVE){
+    void *block = heap_caps_calloc(count, size, internal);
+    if(block) return block;
   }
-  return heap_caps_calloc(count, size, MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+  return heap_caps_calloc_prefer(count, size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT, internal);
 }
 #endif
 
