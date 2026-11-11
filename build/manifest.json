@@ -1,6 +1,6 @@
 {
   "name": "MokaBot",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "new_install_prompt_erase": true,
   "builds": [
     {
@@ -19,7 +19,7 @@
           "offset": 57344
         },
         {
-          "path": "wt32-sc01.bin?v=e6dd6998db41",
+          "path": "wt32-sc01.bin?v=d70424194322",
           "offset": 65536
         }
       ]
@@ -40,7 +40,7 @@
           "offset": 57344
         },
         {
-          "path": "waveshare-s3-touch-lcd-3.5b.bin?v=b793fd8b6ae2",
+          "path": "waveshare-s3-touch-lcd-3.5b.bin?v=793706ec128a",
           "offset": 65536
         }
       ]
