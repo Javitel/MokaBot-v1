@@ -15,6 +15,7 @@
 #include "logic/mdnsResponder.hpp"
 #include "logic/discovery.hpp"
 #include "logic/bleLink.hpp"
+#include "logic/httpsProxy.hpp"
 #include <Update.h>
 #define HTTP_PORT 80
 // Device name: reachable as http://<name>.local (mDNS) and, on routers that
@@ -332,6 +333,8 @@ void serverStart(){
     mdnsResponderStart(getDeviceName(), address);
     // The Android app's "Search" finds MokaBots on the network (discovery.hpp).
     discoveryStart();
+    // https://<name>.local too, for browsers that insist on HTTPS (httpsProxy.hpp).
+    httpsStart();
     while(getMokaWifiStatus() == 0){
       server->handleClient();
       discoveryPoll();
@@ -348,6 +351,7 @@ void serverStart(){
   }
 
   // Release the port so the next start (or provisioning) can bind it.
+  httpsStop();
   mdnsResponderStop();
   discoveryStop();
   server->stop();

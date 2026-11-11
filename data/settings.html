@@ -581,7 +581,7 @@
           var name = document.getElementById("DeviceName").value.toLowerCase();
           var current = location.hostname.toLowerCase();
           if (name && /\.local$/.test(current) && current !== name + ".local") {
-            location.href = "http://" + name + ".local" + location.pathname;
+            location.href = location.protocol + "//" + name + ".local" + location.pathname;
             return;
           }
           // Show the values the device actually stored; screen settings are
