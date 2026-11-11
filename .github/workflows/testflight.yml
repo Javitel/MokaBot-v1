@@ -30,6 +30,8 @@ jobs:
         with:
           fetch-depth: 0
       - id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash .github/app-changes.sh
 
   testflight:

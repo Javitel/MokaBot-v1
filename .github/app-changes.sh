@@ -8,7 +8,16 @@
 set -euo pipefail
 out="${GITHUB_OUTPUT:-/dev/stdout}"
 
-previous=$(git describe --tags --abbrev=0 --match 'v*' HEAD^ 2>/dev/null || true)
+# The newest earlier release tag that has a published release (a tag whose
+# release failed, e.g. v1.0.9, has no APK / IPA to reuse). Without the gh
+# CLI or a token (run locally), the newest earlier tag.
+previous=""
+for tag in $(git tag --merged HEAD^ --list 'v*' --sort=-v:refname); do
+  if [ -z "${GH_TOKEN:-}" ] || gh release view "$tag" >/dev/null 2>&1; then
+    previous=$tag
+    break
+  fi
+done
 echo "previous=$previous" >> "$out"
 
 shared=(mobile data/brew.html data/settings.html)
