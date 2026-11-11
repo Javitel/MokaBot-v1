@@ -2,7 +2,7 @@
     <string name="app_name">MokaBot</string>
     <string name="connect_title">Connect to your MokaBot</string>
     <string name="connect_bluetooth">Connect via Bluetooth</string>
-    <string name="bluetooth_hint">WT32-SC01: only while its WiFi is off. Connects to the last MokaBot used, or lists them when several are in reach.</string>
+    <string name="bluetooth_hint">Only while the WiFi of the MokaBot is off (its network button shows Bluetooth). Connects to the last MokaBot used, or lists them when several are in reach.</string>
     <string name="choose_device">Choose another device…</string>
     <string name="choose_device_title">Choose your MokaBot</string>
     <!-- name, signal, dBm -->

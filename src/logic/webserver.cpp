@@ -51,7 +51,8 @@ static bool validDeviceName(const char *name){
 WiFiProvisioner provisioner;
 MokaWebServer *server = nullptr;
 Preferences preferencesWS;
-String ip = "Disconnected";
+// Shown on the screen's network button: Bluetooth runs while WiFi is off.
+String ip = "Bluetooth";
 int mokaWifiStatus= 0;
 
 // ---- Cancelling provisioning ----------------------------------------------
@@ -140,23 +141,18 @@ static bool connectWiFi(const String &ssid, const String &pass){
   return WiFi.status() == WL_CONNECTED;
 }
 
-// Boards built with MOKA_BLE_ONLY_WITHOUT_WIFI (WT32-SC01): Bluetooth only
-// runs while WiFi is off, as both do not fit in its internal RAM. Starting
-// WiFi stops Bluetooth; switching WiFi off frees the WiFi driver's memory and
-// starts Bluetooth again. Elsewhere both run together.
+// WiFi and Bluetooth never run together (every board): the screen's network
+// button toggles between them. Starting WiFi stops Bluetooth; switching WiFi
+// off frees the WiFi driver's memory and starts Bluetooth again.
 static void wifiStarting(){
-#ifdef MOKA_BLE_ONLY_WITHOUT_WIFI
   bleStop();
-#endif
 }
 
 static void wifiStopped(){
   WiFi.disconnect();
-  ip = "Disconnected";
-#ifdef MOKA_BLE_ONLY_WITHOUT_WIFI
   WiFi.mode(WIFI_OFF);
+  ip = "Bluetooth";
   bleStart();
-#endif
 }
 
 int initNet() {
@@ -187,9 +183,6 @@ int initNet() {
     bleStop();
     Serial.printf("Provisioning: free heap %u\n", (unsigned)ESP.getFreeHeap());
     provisioningWifi();
-#ifndef MOKA_BLE_ONLY_WITHOUT_WIFI
-    bleStart();
-#endif
     if(provisioningCancelled){
       wifiStopped();
       return -1;
@@ -398,6 +391,27 @@ bool setDeviceName(const char *name){
   bleSetName(deviceName);
   Serial.printf("Device name: %s.local\n", deviceName);
   return true;
+}
+
+String getWifiSsid(){
+  prefsLock(); preferencesWS.begin("my-app", true);
+  String ssid = preferencesWS.getString("SSID", "");
+  preferencesWS.end(); prefsUnlock();
+  return ssid;
+}
+
+void setWifiCredentials(const char *ssid, const char *password){
+  prefsLock(); preferencesWS.begin("my-app", false);
+  String stored = preferencesWS.getString("SSID", "");
+  if(ssid && stored != ssid){
+    preferencesWS.putString("SSID", ssid);
+    // Another network: its password, or none (open network) when not given.
+    preferencesWS.putString("Password", password ? password : "");
+  }
+  else if(password){
+    preferencesWS.putString("Password", password);
+  }
+  preferencesWS.end(); prefsUnlock();
 }
 
 const char * getIp() {

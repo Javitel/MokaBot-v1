@@ -19,15 +19,29 @@
     .swatch { width: 28px; height: 28px; border: 1px solid #888; border-radius: 4px; cursor: pointer; padding: 0; }
     .preview { margin-top: 10px; width: 100px; height: 50px; border-radius: 6px; color: #fff;
                font: bold 16px Arial, sans-serif; display: flex; align-items: center; justify-content: center; }
+    .tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 10px 0; border-bottom: 2px solid #6d4c41; }
+    .tabs button { border: 1px solid #888; border-bottom: none; border-radius: 6px 6px 0 0;
+                   padding: 8px 14px; background: #eee; cursor: pointer; font-size: 15px; }
+    .tabs button[aria-selected=true] { background: #6d4c41; color: #fff; border-color: #6d4c41; }
+    [data-tab][hidden] { display: none; }
   </style>
 </head>
 <body>
   <!-- The brew page is "./" on the device and in the apps; a home-screen web
        app has no browser back button. -->
   <button type="button" onclick="document.location='./'">Back to brew</button>
+  <!-- Each fieldset's data-tab names its tab. Fields on hidden tabs are still
+       submitted, so "Save settings" saves every tab. -->
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" data-show="brew">Brew</button>
+    <button type="button" role="tab" data-show="heating">Heating</button>
+    <button type="button" role="tab" data-show="display">Display</button>
+    <button type="button" role="tab" data-show="network">Network</button>
+    <button type="button" role="tab" data-show="firmware">Firmware</button>
+  </div>
   <form id="settings" action="/set" method="get" target="_self">
 
-    <fieldset>
+    <fieldset data-tab="heating">
       <legend>PID controller</legend>
       <label for="PVal">P:</label>
       <input type="number" id="PVal" name="PVal" placeholder="1.0" step="0.000001" min="0" max="500"><br>
@@ -45,13 +59,13 @@
       <small id="pidTuneHint">Enabled when the moka is OFF and the water in the boiler is at most 10 &deg;C above the room temperature.</small>
     </fieldset>
 
-    <fieldset>
+    <fieldset data-tab="network">
       <legend>MQTT</legend>
       <label for="mqttBroker">Broker URL:</label>
       <input type="text" id="mqttBroker" name="mqttBroker">
     </fieldset>
 
-    <fieldset>
+    <fieldset data-tab="heating">
       <legend>Thermistor</legend>
       <label for="RVal">Passive resistor value:</label>
       <input type="number" id="RVal" name="RVal" placeholder="10000" step="1" min="0" max="200000"><br>
@@ -63,7 +77,7 @@
       <input type="number" id="SHC" name="SHC" placeholder="1.597510723e-7" step="any">
     </fieldset>
 
-    <fieldset>
+    <fieldset data-tab="brew">
       <legend>Brew</legend>
       <label for="BloomTime">Bloom phase time (s):</label>
       <input type="number" id="BloomTime" name="BloomTime" placeholder="0" step="1" min="0" max="100"><br>
@@ -82,14 +96,14 @@
       <small>Experimental, off (0) by default: an extraction ends when the boiler heats this many times faster than at its start (less water left), or keeps heating with the heater almost off. 1.2 to 5 once tuned with logged brews.</small>
     </fieldset>
 
-    <fieldset>
+    <fieldset data-tab="brew">
       <legend>Manual power</legend>
       <label for="ManualCutoff">Switch off at boiling point + (&deg;C):</label>
       <input type="number" id="ManualCutoff" name="ManualCutoff" placeholder="3" step="1" min="-10" max="10"><br>
       <small>Whole degrees from -10 to +10; negative values switch off below the boiling point.</small>
     </fieldset>
 
-    <fieldset>
+    <fieldset data-tab="display">
       <legend>Display</legend>
       <!-- An unchecked checkbox is not submitted, so each one drives a hidden
            0/1 field. The hidden fields stay disabled (not sent) until the
@@ -102,16 +116,22 @@
       <label for="DecimalsBox">Show decimals</label>
     </fieldset>
 
-    <fieldset>
+    <fieldset data-tab="network">
       <legend>Network</legend>
       <label for="DeviceName">Device name:</label>
       <input type="text" id="DeviceName" name="DeviceName" placeholder="mokabot" size="20" maxlength="31"
              pattern="[A-Za-z0-9]([A-Za-z0-9\-]{0,29}[A-Za-z0-9])?"
              title="Letters, digits and hyphens (not first or last), up to 31">.local<br>
-      <small>The device answers at http://&lt;name&gt;.local right away; routers learn the new name on the next WiFi connection.</small>
+      <small>The device answers at http://&lt;name&gt;.local right away; routers learn the new name on the next WiFi connection.</small><br>
+      <label for="WifiSsid">WiFi network:</label>
+      <input type="text" id="WifiSsid" name="WifiSsid" size="20" maxlength="32" autocomplete="off"><br>
+      <label for="WifiPassword">WiFi password:</label>
+      <input type="password" id="WifiPassword" name="WifiPassword" size="20" maxlength="64"
+             placeholder="unchanged" autocomplete="new-password"><br>
+      <small>Used the next time WiFi is switched on (tap the network button on the screen; it toggles between WiFi and Bluetooth).</small>
     </fieldset>
 
-    <fieldset>
+    <fieldset data-tab="firmware">
       <legend>Firmware update</legend>
       <label for="OtaUrl">Firmware folder URL:</label>
       <input type="url" id="OtaUrl" name="OtaUrl" placeholder="http://server/firmware/" size="40"><br>
@@ -121,7 +141,7 @@
       <small>Put each board's .bin in that folder. Long press the colour button on the screen to check for an update.</small>
     </fieldset>
 
-    <fieldset>
+    <fieldset data-tab="display">
       <legend>Screen Theme Color</legend>
       <!-- Submitted value. Disabled (so not sent) until the device's colour has
            loaded, so a failed load can never overwrite it. -->
@@ -157,7 +177,7 @@
 
   <!-- Separate from the settings form: downloads, imports or deletes a brew
        saved in slot A/B/C. -->
-  <fieldset>
+  <fieldset data-tab="brew">
     <legend>Saved brews</legend>
     <label for="brewSlot">Slot:</label>
     <select id="brewSlot">
@@ -174,7 +194,7 @@
   </fieldset>
 
   <!-- Separate from the settings form: uploads a firmware .bin to /firmware. -->
-  <fieldset>
+  <fieldset data-tab="firmware">
     <legend>Upload firmware</legend>
     <input type="file" id="firmwareFile" accept=".bin">
     <button type="button" id="firmwareUpload">Upload</button><br>
@@ -183,6 +203,21 @@
   </fieldset>
 
   <script>
+    // ---- Tabs (the last one opened is remembered on this browser).
+    function showTab(name) {
+      document.querySelectorAll("[data-tab]").forEach(function (el) { el.hidden = el.dataset.tab !== name; });
+      document.querySelectorAll(".tabs button").forEach(function (b) {
+        b.setAttribute("aria-selected", b.dataset.show === name ? "true" : "false");
+      });
+      try { localStorage.setItem("settingsTab", name); } catch (e) {}
+    }
+    document.querySelectorAll(".tabs button").forEach(function (b) {
+      b.addEventListener("click", function () { showTab(b.dataset.show); });
+    });
+    var savedTab = null;
+    try { savedTab = localStorage.getItem("settingsTab"); } catch (e) {}
+    showTab(document.querySelector('.tabs button[data-show="' + savedTab + '"]') ? savedTab : "brew");
+
     // Fetch all settings as JSON ({inputId: value}) and fill the matching inputs.
     function loadSettings() {
       fetch("/settingsInfo")

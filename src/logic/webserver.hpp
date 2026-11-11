@@ -1,4 +1,9 @@
 #include <stdbool.h>
+#ifdef __cplusplus
+#include <Arduino.h>
+// Saved WiFi network name (empty when none).
+String getWifiSsid();
+#endif
 
 #ifdef __cplusplus
 extern "C" {
@@ -13,6 +18,10 @@ const char * getDeviceName(void);
 // False (and unchanged) when invalid.
 bool setDeviceName(const char *name);
 int checkStoredCreds();
+// Saved WiFi credentials, used the next time WiFi is switched on. ssid null:
+// keep the network; password null: keep the password, unless the network
+// changes (then no password, for an open network).
+void setWifiCredentials(const char *ssid, const char *password);
 void webserverService(void *param);
 void provisionWifiConnection();
 void serverStart();

@@ -141,6 +141,9 @@ static String retrieveSettings() {
   json += hex;
   json += ",\"DeviceName\":";
   appendJsonString(json, getDeviceName());
+  // The WiFi password is never sent back.
+  json += ",\"WifiSsid\":";
+  appendJsonString(json, getWifiSsid());
   json += ",\"OtaUrl\":";
   appendJsonString(json, otaGetUrl());
   json += ",\"OtaFile\":";
@@ -220,6 +223,12 @@ static void applySettings(const ApiArgs &args) {
 
   // Network (an invalid name is ignored; the page shows the stored one)
   if (args.has("DeviceName")) setDeviceName(args.get("DeviceName").c_str());
+  // WiFi credentials (empty fields are not sent: the password stays unchanged).
+  if (args.has("WifiSsid") || args.has("WifiPassword")) {
+    String ssid = args.get("WifiSsid"), password = args.get("WifiPassword");
+    setWifiCredentials(args.has("WifiSsid") ? ssid.c_str() : nullptr,
+                       args.has("WifiPassword") ? password.c_str() : nullptr);
+  }
 
   // OTA
   if (args.has("OtaUrl")) otaSetUrl(args.get("OtaUrl"));

@@ -800,7 +800,7 @@ void ui_Screen1_screen_init(void)
     lv_obj_set_height(ui_CurrentIPLabel, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_align(ui_CurrentIPLabel, LV_ALIGN_CENTER);
     lv_obj_set_align(ui_CurrentIPLabel, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_CurrentIPLabel, "Disconnected");
+    lv_label_set_text(ui_CurrentIPLabel, "Bluetooth");
     lv_obj_set_style_text_font(ui_CurrentIPLabel, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_ButtonColor = lv_btn_create(ui_Screen1);

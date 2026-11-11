@@ -1,8 +1,8 @@
 #pragma once
 
-// Bluetooth LE link for the Android app (boards built with MOKA_BLE: both;
-// on the WT32-SC01 only while WiFi is off, see MOKA_BLE_ONLY_WITHOUT_WIFI in
-// webserver.cpp, and it needs wt32-iram.py to fit). It
+// Bluetooth LE link for the Android app (boards built with MOKA_BLE: both),
+// only while WiFi is off, see wifiStarting() in webserver.cpp (on the
+// WT32-SC01 it needs wt32-iram.py to fit). It
 // carries the same requests as the web server's data
 // endpoints (see api.hpp), so the app's pages work over either transport.
 //

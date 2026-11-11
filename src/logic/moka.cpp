@@ -128,6 +128,31 @@ double pidValue;
 // Ki starts at 0: estimateIntegral() sets the scheduled value.
 AutoPID myPID(&temperature, &target, &pidValue, 0, timeWindow, defaultp, 0, defaultd);
 
+// Gains last given to the PID (see estimateIntegral).
+static double appliedKp = 0, appliedKi = 0;
+// The gains are divided by the water gain ratio up to this value (an empty
+// boiler heats about twice as fast as a full one).
+#define GAIN_SCHEDULE_MAX_RATIO 2.0
+// Anti-windup. The integral accumulates on the way up from the bang-bang
+// limit (BANG_BELOW_TARGET below the target), and that charge is what holds
+// the temperature on arrival: it must stay. A normal approach leaves
+//   Ki * BANG_BELOW_TARGET * timeWindow / (R * P)   (ms of the window)
+// with R the heating rate at full power. Near and above the boiling point the
+// climb is much slower, the charge grew far beyond that and carried the
+// temperature past the target (at ~106 C by more than the overshoot margin).
+// So while the proportional term alone still asks for more than
+// INTEGRAL_CAP_ABOVE_DUTY, the integral's share of the output is capped at
+// INTEGRAL_CAP_FACTOR times the normal charge. Closer to the target it is
+// free, so it always reaches whatever power holds the temperature.
+#define BANG_BELOW_TARGET       12.0
+#define INTEGRAL_CAP_ABOVE_DUTY 0.15
+#define INTEGRAL_CAP_FACTOR     1.25
+#define PID_NOMINAL_RATE        0.412   // C/s at full power (default calibration)
+static double integralCapMs = 0;
+// A PID step this long after the last one (the moka was OFF) does not count
+// for the integral: AutoPID would add error x the whole pause.
+#define PID_RESUME_MS 2000
+
 Preferences MokaPreferences;
 
 // Handle of the running brewTimer task, NULL when it is not running.
@@ -468,7 +493,7 @@ void saveResistorValues(double newR, double newA, double newB, double newC){
 
 void init() {
 //Wire.setTimeOut(100);
-myPID.setBangBang(12,1);
+myPID.setBangBang(BANG_BELOW_TARGET,1);
 pinMode(pinHeater, OUTPUT);
 digitalWrite(pinHeater,getrelayStatus(LOW));
 //ads.setGain(GAIN_TWOTHIRDS);
@@ -790,7 +815,11 @@ BaseType_t xWasDelayed;
     if(getMokaStatus() == 1 || getMokaStatus() == 2){
       double rate = 0, duty = 0;
       bool windowDone = waterEstimateStep(&rate, &duty);
-      if(getMokaStatus() == 2) checkBrewEnd(windowDone, rate, duty);
+      if(getMokaStatus() == 2){
+        // New water gain ratio: the gains follow it.
+        if(windowDone) estimateIntegral();
+        checkBrewEnd(windowDone, rate, duty);
+      }
     }
     if(getMokaStatus() == 2 && brewstart == false && (current) >= getCalibratedTemp()+ bloomOffset){
       brewstart = true;
@@ -1035,7 +1064,18 @@ static void manualPowerUpdate(){
  void pidUpdate(){
    running = true;
    temperature=current;
+   static uint32_t lastRunMs = 0;
+   uint32_t now = millis();
+   bool resumed = now - lastRunMs > PID_RESUME_MS;
+   lastRunMs = now;
+   double integralBefore = myPID.getIntegral();
    myPID.run();
+   if(resumed) myPID.setIntegral(integralBefore);
+   // Anti-windup (see INTEGRAL_CAP_FACTOR).
+   else if(appliedKi > 0 && appliedKp * (target - temperature) > INTEGRAL_CAP_ABOVE_DUTY * timeWindow
+           && appliedKi * myPID.getIntegral() > integralCapMs){
+     myPID.setIntegral(integralCapMs / appliedKi);
+   }
    double onTime = pidValue * gain;
    heaterDuty = onTime <= 0 ? 0 : (onTime >= timeWindow ? 1 : onTime / timeWindow);
     //if(pidValue>0){
@@ -1251,11 +1291,33 @@ void setResistorValues(double newR, double newA, double newB, double newC){
   MokaPreferences.end(); prefsUnlock(); 
 }
 
-// Schedules Ki with the heat loss, which grows with the difference between
-// the target and the room: Ki = i (the "I" setting, per degree) * delta.
-// Called on every target change and when the PID settings are saved.
+// Gains for the current target and water level. Called on every target
+// change, when the PID settings are saved and after each water window of an
+// extraction.
+//  - Ki follows the heat loss, which grows with the difference between the
+//    target and the room: Ki = i (the "I" setting, per degree) * delta.
+//  - While extracting, water leaves the boiler: the same power heats less
+//    mass, so the loop gets stronger (see waterGainRatio, a / a0). P, Ki and
+//    D are divided by that ratio, which keeps the loop as calibrated with a
+//    full boiler; higher targets empty it sooner and oscillated without it.
+// A Ki change rescales the accumulated integral, so the integral's share of
+// the output (Ki * integral) does not jump.
 void estimateIntegral(){
-  double delta = target - getAmbientTemp();
+  float ambient = getAmbientTemp();
+  if(isnan(ambient) || ambient < -20 || ambient > 60) ambient = 25;
+  double delta = target - ambient;
   if(delta < 0) delta = 0;
-  myPID.setGains(p, i * delta, d);
+  double scale = 1;
+  float ratio = waterGainRatio;
+  if(mokaStatus == 2 && !isnan(ratio) && ratio > 1){
+    scale = 1 / (ratio < GAIN_SCHEDULE_MAX_RATIO ? ratio : GAIN_SCHEDULE_MAX_RATIO);
+  }
+  double ki = i * delta * scale;
+  if(appliedKi > 0 && ki > 0 && ki != appliedKi) myPID.setIntegral(myPID.getIntegral() * appliedKi / ki);
+  // From the unscaled gains: the output share that holds a temperature does
+  // not depend on the water level.
+  integralCapMs = p > 0 ? INTEGRAL_CAP_FACTOR * i * delta * BANG_BELOW_TARGET * timeWindow / (PID_NOMINAL_RATE * p) : 0;
+  appliedKp = p * scale;
+  appliedKi = ki;
+  myPID.setGains(appliedKp, ki, d * scale);
 }
