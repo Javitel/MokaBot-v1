@@ -1,6 +1,6 @@
 {
   "name": "MokaBot",
-  "version": "1.0.7",
+  "version": "1.0.8",
   "new_install_prompt_erase": true,
   "builds": [
     {
@@ -19,7 +19,7 @@
           "offset": 57344
         },
         {
-          "path": "wt32-sc01.bin?v=596061a04199",
+          "path": "wt32-sc01.bin?v=1dc3f4d6256b",
           "offset": 65536
         }
       ]
