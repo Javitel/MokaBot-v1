@@ -390,6 +390,40 @@ void ui_adjust_power_percent(int delta)
     powerPercent = value;
 }
 
+// ---- Bluetooth pairing PIN -----------------------------------------------------
+// On the top layer, above every page, while a phone pairs (see blePairingPin).
+static lv_obj_t * ui_BlePinBox;
+static lv_obj_t * ui_BlePinLabel;
+
+void ui_set_ble_pin(uint32_t pin)
+{
+    if(ui_BlePinBox == NULL) {
+        if(pin == 0) return;
+        ui_BlePinBox = lv_obj_create(lv_layer_top());
+        lv_obj_set_size(ui_BlePinBox, 300, 150);
+        lv_obj_center(ui_BlePinBox);
+        lv_obj_clear_flag(ui_BlePinBox, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_color(ui_BlePinBox, lv_color_hex(0x202020), LV_PART_MAIN);
+        lv_obj_set_style_border_color(ui_BlePinBox, lv_color_hex(0x0060ff), LV_PART_MAIN);
+        lv_obj_set_style_border_width(ui_BlePinBox, 3, LV_PART_MAIN);
+        lv_obj_t * title = lv_label_create(ui_BlePinBox);
+        lv_label_set_text(title, "Bluetooth PIN");
+        lv_obj_set_style_text_font(title, &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_obj_set_style_text_color(title, lv_color_white(), LV_PART_MAIN);
+        lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 0);
+        ui_BlePinLabel = lv_label_create(ui_BlePinBox);
+        lv_obj_set_style_text_font(ui_BlePinLabel, &lv_font_montserrat_48, LV_PART_MAIN);
+        lv_obj_set_style_text_color(ui_BlePinLabel, lv_color_white(), LV_PART_MAIN);
+        lv_obj_align(ui_BlePinLabel, LV_ALIGN_CENTER, 0, 15);
+    }
+    if(pin == 0) {
+        lv_obj_add_flag(ui_BlePinBox, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_label_set_text_fmt(ui_BlePinLabel, "%06lu", (unsigned long)pin);
+    lv_obj_clear_flag(ui_BlePinBox, LV_OBJ_FLAG_HIDDEN);
+}
+
 // ---- Bluetooth indicator ------------------------------------------------------
 // Blue 5x5 px square in the top left corner (5 px in from each edge) while a
 // phone is connected over Bluetooth. On the top layer, so it stays visible on

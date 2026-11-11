@@ -26,6 +26,7 @@ extern "C" {
 #endif
 
 #include <stdbool.h>
+#include <stdint.h>
 
 // Starts advertising and serving requests. No-op without MOKA_BLE.
 void bleStart(void);
@@ -37,6 +38,9 @@ void bleSetName(const char *name);
 // True while a phone is connected over Bluetooth (always false without
 // MOKA_BLE).
 bool bleConnected(void);
+// PIN to show on the screen while a phone pairs, 0 otherwise. The phone asks
+// for it once; paired phones reconnect without it.
+uint32_t blePairingPin(void);
 
 #ifdef __cplusplus
 }

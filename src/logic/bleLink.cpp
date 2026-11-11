@@ -6,6 +6,7 @@ void bleStart(void) {}
 void bleStop(void) {}
 void bleSetName(const char *name) {}
 bool bleConnected(void) { return false; }
+uint32_t blePairingPin(void) { return 0; }
 
 #else
 
@@ -18,6 +19,7 @@ bool bleConnected(void) { return false; }
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
+#include <esp_random.h>
 
 #define BLE_LAST_PACKET     0x01
 // Largest request accepted (a brew import is ~20 KB of text).
@@ -30,6 +32,8 @@ static NimBLEServer *bleServer = nullptr;
 static NimBLECharacteristic *txCharacteristic = nullptr;
 static volatile bool connected = false;
 static volatile uint16_t peerMtu = 23;
+// PIN shown on the screen while a phone pairs (0: none), see blePairingPin().
+static volatile uint32_t pairingPin = 0;
 
 // Request being received (written by the NimBLE host task) and complete
 // requests waiting for the worker task (as heap-allocated Strings).
@@ -47,9 +51,44 @@ class ServerCallbacks : public NimBLEServerCallbacks {
     // screen's blue square flashes too).
     beep();
     Serial.println("Bluetooth: phone connected");
+    // Asks the phone to pair (or, when it already is, to encrypt with the
+    // stored keys) right away, instead of on its first request.
+    int rc = 0;
+    bool started = NimBLEDevice::startSecurity(connInfo.getConnHandle(), &rc);
+    Serial.printf("Bluetooth: security requested (%s, rc %d), %d phone(s) paired\n",
+                  started ? "ok" : "failed", rc, NimBLEDevice::getNumBonds());
+  }
+  // Pairing: a new random 6-digit PIN, shown on the screen; the phone asks
+  // the user to type it (passkey entry, protects against a device in the
+  // middle). A phone paired before reconnects without it.
+  // Numeric comparison: only offered to devices that can answer yes/no; logged
+  // in case a phone ends up here.
+  void onConfirmPassKey(NimBLEConnInfo &connInfo, uint32_t pin) override {
+    Serial.println("Bluetooth: phone asked for numeric comparison, refused");
+    NimBLEDevice::injectConfirmPasskey(connInfo, false);
+  }
+  uint32_t onPassKeyDisplay() override {
+    uint32_t pin = 100000 + esp_random() % 900000;
+    pairingPin = pin;
+    Serial.println("Bluetooth: pairing, PIN shown on the screen");
+    return pin;
+  }
+  void onAuthenticationComplete(NimBLEConnInfo &connInfo) override {
+    pairingPin = 0;
+    Serial.printf("Bluetooth: security done: encrypted %d, PIN-protected %d, bonded %d, key %d bytes\n",
+                  connInfo.isEncrypted(), connInfo.isAuthenticated(), connInfo.isBonded(), connInfo.getSecKeySize());
+    if (connInfo.isEncrypted() && connInfo.isAuthenticated()) {
+      Serial.printf("Bluetooth: paired (%s)\n", connInfo.isBonded() ? "bonded" : "this connection only");
+    }
+    else {
+      // Wrong PIN or cancelled on the phone: nothing is accepted.
+      Serial.println("Bluetooth: pairing failed, disconnecting");
+      NimBLEDevice::getServer()->disconnect(connInfo.getConnHandle());
+    }
   }
   void onDisconnect(NimBLEServer *server, NimBLEConnInfo &connInfo, int reason) override {
     connected = false;
+    pairingPin = 0;
     Serial.printf("Bluetooth: phone disconnected (%d)\n", reason);
     NimBLEDevice::startAdvertising();
   }
@@ -163,6 +202,26 @@ void bleSetName(const char *name) {
   if (wasAdvertising) advertising->start();
 }
 
+// Diagnostics: the stack's pairing events with their status. Status
+// 0x5xx: the MokaBot refused (xx = SMP reason), 0x6xx: the phone refused.
+static struct ble_gap_event_listener pairingListener;
+static int onPairingEvent(struct ble_gap_event *event, void *) {
+  switch (event->type) {
+    case BLE_GAP_EVENT_ENC_CHANGE:
+      Serial.printf("Bluetooth: encryption change, status 0x%x\n", event->enc_change.status);
+      break;
+    case BLE_GAP_EVENT_PASSKEY_ACTION:
+      Serial.printf("Bluetooth: pairing action %d\n", event->passkey.params.action);
+      break;
+    case BLE_GAP_EVENT_REPEAT_PAIRING:
+      Serial.println("Bluetooth: phone pairs again (old pairing replaced)");
+      break;
+    default:
+      break;
+  }
+  return 0;
+}
+
 void bleStart(void) {
   if (bleServer) return;
   // Created once: bleStop() / bleStart() only restart the Bluetooth stack.
@@ -170,12 +229,21 @@ void bleStart(void) {
   if (!requestQueue) requestQueue = xQueueCreate(4, sizeof(String *));
   NimBLEDevice::init(getDeviceName());
   NimBLEDevice::setMTU(517);
+  // Pairing with a PIN (see onPassKeyDisplay): bonding (the phone is
+  // remembered), protection against a device in the middle, LE Secure
+  // Connections. The MokaBot can only show a number.
+  NimBLEDevice::setSecurityAuth(true, true, true);
+  NimBLEDevice::setSecurityIOCap(BLE_HS_IO_DISPLAY_ONLY);
+  static bool listening = false;
+  if (!listening) listening = ble_gap_event_listener_register(&pairingListener, onPairingEvent, NULL) == 0;
   bleServer = NimBLEDevice::createServer();
   bleServer->setCallbacks(new ServerCallbacks());
 
   NimBLEService *service = bleServer->createService(MOKA_BLE_SERVICE_UUID);
   NimBLECharacteristic *rx = service->createCharacteristic(
-    MOKA_BLE_RX_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR);
+    MOKA_BLE_RX_UUID, NIMBLE_PROPERTY::WRITE | NIMBLE_PROPERTY::WRITE_NR |
+                      // Requests only from a phone paired with the PIN.
+                      NIMBLE_PROPERTY::WRITE_ENC | NIMBLE_PROPERTY::WRITE_AUTHEN);
   rx->setCallbacks(new RxCallbacks());
   txCharacteristic = service->createCharacteristic(MOKA_BLE_TX_UUID, NIMBLE_PROPERTY::NOTIFY);
   service->start();
@@ -198,6 +266,7 @@ void bleStart(void) {
 void bleStop(void) {
   if (!bleServer) return;
   connected = false;
+  pairingPin = 0;
   NimBLEDevice::deinit(true);
   bleServer = nullptr;
   txCharacteristic = nullptr;
@@ -206,6 +275,10 @@ void bleStop(void) {
 
 bool bleConnected(void) {
   return connected;
+}
+
+uint32_t blePairingPin(void) {
+  return pairingPin;
 }
 
 #endif

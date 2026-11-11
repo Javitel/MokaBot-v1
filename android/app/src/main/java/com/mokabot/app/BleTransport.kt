@@ -16,6 +16,7 @@ import android.content.Context
 import android.os.Build
 import android.os.ParcelUuid
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeout
@@ -133,13 +134,61 @@ class BleTransport private constructor(private val context: Context) : Transport
     }
 
     private suspend fun open(device: BluetoothDevice) {
+        pair(device)
         val step = CompletableDeferred<Unit>()
         connectStep = step
         gatt = device.connectGatt(context, false, callback, BluetoothDevice.TRANSPORT_LE)
-        withTimeout(15_000) { step.await() }
+        withTimeout(PAIRING_TIMEOUT_MS) { step.await() }
+    }
+
+    /**
+     * Pairs with the MokaBot before connecting, the way the phone's Bluetooth
+     * settings do: Android then shows its dialog to type the PIN shown on the
+     * MokaBot's screen. Left to the connection (the MokaBot asks to pair as
+     * soon as a phone connects), some phones only showed a "Pair?" prompt
+     * without a PIN field and the pairing failed. Already paired: nothing to do.
+     */
+    private suspend fun pair(device: BluetoothDevice) {
+        if (device.bondState == BluetoothDevice.BOND_BONDED) return
+        if (device.bondState == BluetoothDevice.BOND_NONE && !device.createBond()) {
+            throw IllegalStateException("could not start pairing")
+        }
+        // Leaves BONDING when the PIN was typed (BONDED) or the dialog was
+        // cancelled / the PIN was wrong (NONE).
+        val deadline = System.currentTimeMillis() + PAIRING_TIMEOUT_MS
+        delay(500)
+        while (device.bondState == BluetoothDevice.BOND_BONDING && System.currentTimeMillis() < deadline) delay(250)
+        if (device.bondState != BluetoothDevice.BOND_BONDED) {
+            throw IllegalStateException("not paired: type the PIN shown on the MokaBot's screen")
+        }
+    }
+
+    /** True while Android is pairing with the MokaBot (its PIN dialog is up). */
+    private fun pairing(): Boolean = gatt?.device?.bondState == BluetoothDevice.BOND_BONDING
+
+    /**
+     * Waits until a pairing in progress ends (up to [PAIRING_TIMEOUT_MS]).
+     * True when the phone is paired then.
+     */
+    private suspend fun waitForPairing(): Boolean {
+        val deadline = System.currentTimeMillis() + PAIRING_TIMEOUT_MS
+        while (pairing() && System.currentTimeMillis() < deadline) delay(250)
+        return gatt?.device?.bondState == BluetoothDevice.BOND_BONDED
     }
 
     private suspend fun writePacket(packet: ByteArray) {
+        // Refused before the PIN was entered: once paired, sent again.
+        try {
+            writePacketOnce(packet)
+        } catch (e: PairingNeeded) {
+            if (!waitForPairing()) throw IllegalStateException("not paired: the PIN shown on the MokaBot is needed")
+            writePacketOnce(packet)
+        }
+    }
+
+    private class PairingNeeded : Exception()
+
+    private suspend fun writePacketOnce(packet: ByteArray) {
         val g = gatt ?: throw IllegalStateException("not connected")
         val characteristic = rx ?: throw IllegalStateException("not connected")
         val done = CompletableDeferred<Int>()
@@ -156,7 +205,11 @@ class BleTransport private constructor(private val context: Context) : Transport
             g.writeCharacteristic(characteristic)
         }
         if (!started) throw IllegalStateException("write failed")
-        val status = withTimeout(5_000) { done.await() }
+        // Android holds the write while its PIN dialog is up.
+        var status = withTimeoutOrNull(5_000) { done.await() }
+        if (status == null && pairing()) status = withTimeoutOrNull(PAIRING_TIMEOUT_MS) { done.await() }
+        if (status == null) throw IllegalStateException("write timed out")
+        if (status in PAIRING_STATUSES) throw PairingNeeded()
         if (status != BluetoothGatt.GATT_SUCCESS) throw IllegalStateException("write failed ($status)")
     }
 
@@ -211,6 +264,11 @@ class BleTransport private constructor(private val context: Context) : Transport
         val TX_UUID: UUID = UUID.fromString("6d6f6b61-626f-7400-0000-000000000003")
         private val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
         private const val LAST_PACKET = 0x01
+        // Long enough to read the PIN on the MokaBot and type it.
+        private const val PAIRING_TIMEOUT_MS = 60_000L
+        // Write refused because the phone is not paired (yet): insufficient
+        // authentication / encryption, or the stack's authentication failure.
+        private val PAIRING_STATUSES = setOf(5, 15, 137)
 
         /**
          * Scans for MokaBots (their service UUID) for [durationMs] and returns
