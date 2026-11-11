@@ -19,7 +19,8 @@ on:
 
 jobs:
   testflight:
-    runs-on: macos-15   # Xcode 16: reads the project format of current XcodeGen
+    # App Store Connect only accepts apps built with the iOS 26 SDK (Xcode 26).
+    runs-on: macos-26
     env:
       BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
       TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -27,6 +28,16 @@ jobs:
       ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
     steps:
       - uses: actions/checkout@v4
+      - name: Select Xcode 26
+        run: |
+          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          if [ -z "$xcode" ]; then
+            echo "::error::No Xcode 26 on this runner (App Store Connect requires the iOS 26 SDK)"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          sudo xcode-select -s "$xcode"
+          xcodebuild -version
       - name: Check the settings
         run: |
           missing=""
