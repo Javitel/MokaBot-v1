@@ -36,7 +36,7 @@ List of features
 - iPhone / iPad: open http://mokabot.local in Safari and use "Add to Home Screen" for an app-like icon (WiFi). The native app (`ios/`, same pages, Bluetooth and WiFi) is built unsigned by GitHub Actions ("iOS app" workflow, artifact `mokabot-ios-unsigned`); it has to be signed (Xcode with an Apple ID, AltStore/Sideloadly, or TestFlight) to be installed.
 - Android app (`android/`): the brew page and settings page in an app, connected over WiFi (both boards) or Bluetooth LE (both boards, while WiFi is off: the network button on the screen shows "Bluetooth" and a tap toggles between WiFi and Bluetooth, which never run together; the WiFi network and password can be set in the settings page, also over Bluetooth; a blue 5x5 px square near the top left corner of the screen shows the Bluetooth connection). With several MokaBots in reach, the app lists them by device name (the name set in the settings page) and signal strength, and remembers the last one; "Search the WiFi network" finds them on WiFi without typing an address. When a phone connects over Bluetooth the blue square flashes (and the Waveshare beeps), so you know which MokaBot it joined. GitHub Actions builds the APK ("Android app" workflow, artifact `mokabot-app`).
 
-Printed arts:
+Printed parts:
 
 [https://cults3d.com/es/modelo-3d/variado/mokabot-v1
 ](https://cults3d.com/:5146229)
@@ -45,12 +45,12 @@ Components used:
 
  - WT32-SC01 (**NO WT32-SC01 Plus**), or Waveshare ESP32-S3-Touch-LCD-3.5B (adds a speaker for button beeps).
  - ADS1115.
- - NTC50k 3950 M6. [NTC 50k](https://es.aliexpress.com/item/1005006189248088.html)
- - 2Kohm resistor, 1% or better precision.
+ - NTC50k 3950 M6. [NTC 50k](https://es.aliexpress.com/item/1005006189248088.html) You will need a M6 nut to attatch it.
+ - 2Kohm resistor, 1% or better precision. You can measure the value once the circuit is connected and override the value in settings.
  - BMP280.
  - 5V2A power supply. [Power supply](https://es.aliexpress.com/item/1005004434305525.html)
  - C13 female connector. [C13 connector](https://es.aliexpress.com/item/1005009947629857.html)
- - Round switch. [Switch](https://es.aliexpress.com/item/1005013351974257.html)
+ - Round switch. [Switch](https://a.aliexpress.com/_EHTsjj0) 2D2P-Negro
  - Kettle Connector [Connector](https://es.aliexpress.com/item/1005012049626600.html?)
  - SSR (Relay) [Relay](https://es.aliexpress.com/item/1005004651776233.html) Activate on HIGH, The dilema with this SSR is about its amperaje, is rated for 2A (440-480w) but the moka pot can use up to 550W, I bridged the security fuse, not recomendable but a small enough ssr does not come mounted to be wired this way and other options are oversized.
 
