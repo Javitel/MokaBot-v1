@@ -44,8 +44,8 @@ Components used:
 
  - WT32-SC01 (**NO WT32-SC01 Plus**), or Waveshare ESP32-S3-Touch-LCD-3.5B (adds a speaker for button beeps).
  - ADS1115.
- - NTC50k 3950 M6. [NTC 50k](https://es.aliexpress.com/item/1005006189248088.html)
- - 2Kohm resistor, 1% or better precision.
+ - NTC50k 3950 M6. [NTC 50k](https://es.aliexpress.com/item/1005006189248088.html) You will need a M6 nut to attatch it.
+ - 2Kohm resistor, 1% or better precision. You can measure the value once the circuit is connected and override the value in settings.
  - BMP280.
  - 5V2A power supply. [Power supply](https://es.aliexpress.com/item/1005004434305525.html)
  - C13 female connector. [C13 connector](https://es.aliexpress.com/item/1005009947629857.html)
