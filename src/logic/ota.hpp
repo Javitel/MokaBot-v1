@@ -50,4 +50,6 @@ String otaGetUrl();
 void otaSetUrl(const String &url);
 // File name this board downloads from the base URL.
 const char * otaFirmwareFile();
+// Folder used when none is saved (the latest GitHub Release).
+const char * otaDefaultUrl();
 #endif

@@ -1,0 +1,87 @@
+# Signed iPhone/iPad build uploaded to TestFlight (App Store Connect).
+# Runs on each release tag "v*" and by hand (Actions > TestFlight > Run
+# workflow). Needs, in the repository settings (Secrets and variables >
+# Actions):
+#  - variable IOS_BUNDLE_ID: the app's bundle ID, as registered on
+#    developer.apple.com and used by the app in App Store Connect;
+#  - secrets APPLE_TEAM_ID, ASC_KEY_ID, ASC_ISSUER_ID and ASC_KEY_P8 (an App
+#    Store Connect API key with the Admin role: Xcode creates the distribution
+#    certificate and provisioning profile with it, nothing is stored here).
+# Version: custom_firmware_version (platformio.ini); build number: this
+# workflow's run number, which only grows, as App Store Connect requires.
+name: TestFlight
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  testflight:
+    runs-on: macos-15   # Xcode 16: reads the project format of current XcodeGen
+    env:
+      BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
+      TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check the settings
+        run: |
+          missing=""
+          [ -n "$BUNDLE_ID" ] || missing="$missing variable:IOS_BUNDLE_ID"
+          [ -n "$TEAM_ID" ] || missing="$missing secret:APPLE_TEAM_ID"
+          [ -n "$KEY_ID" ] || missing="$missing secret:ASC_KEY_ID"
+          [ -n "$ISSUER_ID" ] || missing="$missing secret:ASC_ISSUER_ID"
+          [ -n "${{ secrets.ASC_KEY_P8 }}" ] || missing="$missing secret:ASC_KEY_P8"
+          if [ -n "$missing" ]; then
+            echo "::error::Not set in Settings > Secrets and variables > Actions:$missing"
+            exit 1
+          fi
+      - name: API key file
+        env:
+          KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          printf '%s\n' "$KEY_P8" > "$RUNNER_TEMP/keys/AuthKey.p8"
+          echo "KEY_PATH=$RUNNER_TEMP/keys/AuthKey.p8" >> "$GITHUB_ENV"
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          cd ios && xcodegen generate
+      - name: Archive (signed)
+        run: |
+          version=$(sed -n 's/^custom_firmware_version *= *//p' platformio.ini | tr -d '\r')
+          xcodebuild -project ios/MokaBot.xcodeproj -scheme MokaBot -configuration Release \
+            -destination "generic/platform=iOS" -archivePath "$RUNNER_TEMP/MokaBot.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID" DEVELOPMENT_TEAM="$TEAM_ID" \
+            CODE_SIGN_STYLE=Automatic \
+            MARKETING_VERSION="$version" CURRENT_PROJECT_VERSION="${{ github.run_number }}" \
+            archive
+      - name: Upload to TestFlight
+        run: |
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<PLIST
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>$TEAM_ID</string>
+          </dict>
+          </plist>
+          PLIST
+          xcodebuild -exportArchive -archivePath "$RUNNER_TEMP/MokaBot.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$KEY_PATH" -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID"
+      - name: Remove the API key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"

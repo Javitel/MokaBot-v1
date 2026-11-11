@@ -256,3 +256,7 @@ void httpsStop(void){
   httpsRun = false;
   for(int k = 0; k < 100 && httpsTaskAlive; k++) vTaskDelay(pdMS_TO_TICKS(100));
 }
+
+bool httpsRunning(void){
+  return httpsTaskAlive;
+}

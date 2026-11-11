@@ -40,6 +40,20 @@ bool LOAD_DEFAULT_CONFIG_DATA = true;
 #endif
 #include "devices/beep.hpp"
 
+#if defined(BOARD_WT32_SC01)
+#include <esp_heap_caps.h>
+#include <mbedtls/platform.h>
+// TLS (the HTTPS update check and download, the HTTPS pages) needs about
+// 40 KB in blocks of 16 KB. The WT32-SC01's internal RAM has less than that
+// left once WiFi is on ("SSL - Memory allocation failed": the update check
+// said "no version file"), so mbedTLS allocates from the 4 MB of PSRAM
+// first, and from internal RAM only when that fails.
+static void *tlsCalloc(size_t count, size_t size){
+  return heap_caps_calloc_prefer(count, size, 2, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT,
+                                 MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+}
+#endif
+
 //************************************************************************************
 //  SETUP AND LOOP
 //*********************************************************
@@ -243,6 +257,10 @@ void calculateLabels(void *param){
 
 void setup() {
   Serial.begin(115200);
+#if defined(BOARD_WT32_SC01)
+  if(psramFound()) mbedtls_platform_set_calloc_free(tlsCalloc, free);
+  Serial.printf("PSRAM: %u bytes free\n", (unsigned)ESP.getFreePsram());
+#endif
   displayInit();
   beepInit();
 

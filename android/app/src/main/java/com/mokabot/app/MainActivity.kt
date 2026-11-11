@@ -160,14 +160,15 @@ class MainActivity : AppCompatActivity() {
     // ---- WiFi ----
 
     private fun connectWifi(address: String) {
-        val host = address.trim().removePrefix("http://").removeSuffix("/")
+        val host = address.trim().removePrefix("http://").removePrefix("https://").removeSuffix("/")
         if (host.isEmpty()) return
         addressInput.setText(host)
         prefs().edit().putString(KEY_ADDRESS, host).apply()
         setBusy(true, getString(R.string.status_connecting))
         lifecycleScope.launch {
             try {
-                open(WifiTransport.connect(host))
+                // The name is what is saved; the app connects to its address.
+                open(WifiTransport.connect(Discovery.resolve(host)))
             } catch (e: Exception) {
                 failed(e)
             }

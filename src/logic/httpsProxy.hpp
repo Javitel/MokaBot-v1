@@ -13,3 +13,5 @@
 void httpsStart(void);
 // Stops listening and waits until the port is released.
 void httpsStop(void);
+// True while the HTTPS front end is running.
+bool httpsRunning(void);

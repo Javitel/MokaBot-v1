@@ -3,6 +3,7 @@
 #include <WiFiClient.h>
 #include <WiFiClientSecure.h>
 #include <HTTPClient.h>
+#include "logic/httpsProxy.hpp"
 #include <HTTPUpdate.h>
 #include <Update.h>
 #include <Preferences.h>
@@ -89,6 +90,10 @@ void otaSetUrl(const String &url){
   prefs.end(); prefsUnlock();
 }
 
+const char * otaDefaultUrl(){
+  return OTA_DEFAULT_URL;
+}
+
 const char * otaFirmwareFile(){
   return OTA_FIRMWARE_FILE;
 }
@@ -155,6 +160,10 @@ static int compareVersions(const String &a, const String &b){
 
 static void otaTask(void *param){
   String url = otaFirmwareUrl();
+  // The HTTPS pages (httpsProxy.hpp) pause meanwhile: two TLS sessions do not
+  // fit in memory next to each other on the WT32-SC01.
+  bool httpsWasRunning = httpsRunning();
+  httpsStop();
 
   if(!WiFi.isConnected()){
     setStatus("OTA: no WiFi");
@@ -166,7 +175,13 @@ static void otaTask(void *param){
     setStatus("OTA: checking");
     String versionUrl = otaVersionUrl();
     String remoteVersion;
+    Serial.printf("OTA: free heap %u, largest block %u\n", (unsigned)ESP.getFreeHeap(), (unsigned)ESP.getMaxAllocHeap());
     int versionCode = fetchText(versionUrl, remoteVersion);
+    // No answer at all (connection or TLS failure): one more try.
+    if(versionCode < 0 && !otaCancelRequested){
+      vTaskDelay(pdMS_TO_TICKS(1000));
+      versionCode = fetchText(versionUrl, remoteVersion);
+    }
     bool knowsVersion = versionCode == HTTP_CODE_OK;
     if(knowsVersion){
       strlcpy(availableVersion, remoteVersion.c_str(), sizeof(availableVersion));
@@ -183,7 +198,13 @@ static void otaTask(void *param){
     // The version file decides: without it nothing is downloaded, and only a
     // newer version is installed.
     if(!knowsVersion){
-      setStatus("OTA: no version file");
+      // Says why: the server answered without the file (e.g. HTTP 404: wrong
+      // folder, or a release still being published), or did not answer
+      // (no internet, DNS, TLS or memory; the number is HTTPClient's error).
+      char text[sizeof(otaStatus)];
+      if(versionCode > 0) snprintf(text, sizeof(text), "OTA: no version (HTTP %d)", versionCode);
+      else snprintf(text, sizeof(text), "OTA: no answer (%d)", versionCode);
+      setStatus(text);
       goto finished;
     }
     {
@@ -263,6 +284,7 @@ static void otaTask(void *param){
   }
 
 finished:
+  if(httpsWasRunning && WiFi.isConnected()) httpsStart();
   otaPercent = -1;
   otaRunning = false;
   // Show the result for a while; Cancel (or a cancel made earlier) closes it.

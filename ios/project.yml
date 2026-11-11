@@ -52,7 +52,11 @@ targets:
           - UIInterfaceOrientationLandscapeRight
         NSBluetoothAlwaysUsageDescription: MokaBot connects to your moka pot over Bluetooth.
         NSLocalNetworkUsageDescription: MokaBot connects to your moka pot on the WiFi network.
-        # The MokaBot's web server is plain HTTP on the local network.
+        # The MokaBot's web server is plain HTTP on the local network (.local
+        # names and IP addresses); internet connections stay HTTPS only.
         NSAppTransportSecurity:
-          NSAllowsArbitraryLoads: true
+          NSAllowsLocalNetworking: true
+        # Only the system's own encryption (HTTPS): App Store Connect does not
+        # ask for export compliance on each build.
+        ITSAppUsesNonExemptEncryption: false
     scheme: {}

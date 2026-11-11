@@ -49,4 +49,19 @@ object Discovery {
         }
         found.values.toList()
     }
+
+    /**
+     * Address of "<name>.local". Android resolves .local names only from
+     * version 12, so the MokaBots are asked first (by device name, see
+     * [search]); the system resolver is the fallback. Other names and IPs
+     * are returned unchanged.
+     */
+    suspend fun resolve(host: String): String {
+        if (!host.endsWith(".local", ignoreCase = true)) return host
+        val name = host.dropLast(".local".length)
+        search().firstOrNull { it.name.equals(name, ignoreCase = true) }?.let { return it.ip }
+        return withContext(Dispatchers.IO) {
+            try { InetAddress.getByName(host).hostAddress ?: host } catch (e: Exception) { host }
+        }
+    }
 }

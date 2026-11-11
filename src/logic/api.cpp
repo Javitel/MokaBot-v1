@@ -146,6 +146,8 @@ static String retrieveSettings() {
   appendJsonString(json, getWifiSsid());
   json += ",\"OtaUrl\":";
   appendJsonString(json, otaGetUrl());
+  json += ",\"OtaDefaultUrl\":";
+  appendJsonString(json, otaDefaultUrl());
   json += ",\"OtaFile\":";
   appendJsonString(json, otaFirmwareFile());
   json += "}";
