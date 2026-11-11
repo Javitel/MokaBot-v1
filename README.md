@@ -49,7 +49,7 @@ Components used:
  - BMP280.
  - 5V2A power supply. [Power supply](https://es.aliexpress.com/item/1005004434305525.html)
  - C13 female connector. [C13 connector](https://es.aliexpress.com/item/1005009947629857.html)
- - Round switch. [Switch](https://es.aliexpress.com/item/1005013351974257.html)
+ - Round switch. [Switch](https://a.aliexpress.com/_EHTsjj0)
  - Kettle Connector [Connector](https://es.aliexpress.com/item/1005012049626600.html?)
  - SSR (Relay) [Relay](https://es.aliexpress.com/item/1005004651776233.html) Activate on HIGH, The dilema with this SSR is about its amperaje, is rated for 2A (440-480w) but the moka pot can use up to 550W, I bridged the security fuse, not recomendable but a small enough ssr does not come mounted to be wired this way and other options are oversized.
 
