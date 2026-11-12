@@ -176,10 +176,14 @@ void overrideBoiling(double input){
 // Calibration heats towards 110 C (past the preheat limit) and keeps the last
 // CALIBRATION_WINDOW_SAMPLES readings: once they are within
 // CALIBRATION_STABLE_RANGE the water is boiling and the highest one is saved.
-#define CALIBRATION_SAMPLE_MS      100
-#define CALIBRATION_WINDOW_SAMPLES 30     // 3 s
-#define CALIBRATION_STABLE_RANGE   0.5
-#define CALIBRATION_TIMEOUT_MS     (60UL * 1000)       // 1 min
+// A plateau: at most 0.3 C over 20 s (0.015 C/s). The earlier 0.5 C over 3 s
+// (0.17 C/s) was met by the slowing climb just below boiling and by probe lag,
+// and ended the calibration several degrees too low.
+#define CALIBRATION_SAMPLE_MS      500
+#define CALIBRATION_WINDOW_SAMPLES 40     // 20 s
+#define CALIBRATION_STABLE_RANGE   0.3
+// Long enough to reach the plateau from CALIBRATION_START_BELOW below it.
+#define CALIBRATION_TIMEOUT_MS     (5UL * 60 * 1000)   // 5 min
 // Calibration starts this many degrees below the theoretical boiling point at
 // the altitude (from the ambient pressure); a plateau below that is not
 // boiling yet and heating continues. Without a valid pressure reading,
@@ -314,7 +318,7 @@ void calibrateBoiling(){
         setCalibrationMessage("Calibration: no reading", false);
         return;
     }
-    // Only near boiling, so the 1 min timeout is enough to reach it.
+    // Only near boiling, so CALIBRATION_TIMEOUT_MS is enough to reach it.
     float startTemp = calibrationStartTemp();
     if(temp < startTemp){
         setCalibrationMessage("Calibrate at >=", false, startTemp);

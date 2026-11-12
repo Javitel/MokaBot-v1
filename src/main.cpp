@@ -141,6 +141,8 @@ void calculateLabels(void *param){
   uint32_t bleConnectedAt = 0;
   bool lastBleFlashing = false;
   uint32_t lastBlePin = 0;
+  String lastSetupReason;
+  String lastProgressText;
   String lastIp, lastTempText, lastPressureText, lastTargetText, lastExtraText, lastBloomText, lastBrewText, lastExtractText, lastProfileStatusText;
   while(true){
     vTaskDelay( pdMS_TO_TICKS( 50 ));
@@ -265,6 +267,33 @@ void calculateLabels(void *param){
     bool flashing = ble && millis() - bleConnectedAt < BLE_FLASH_MS;
     if(initCycle || ble != lastBleConnected || flashing || lastBleFlashing){
       ui_set_ble_indicator(ble && (!flashing || ((millis() - bleConnectedAt) / BLE_FLASH_PERIOD_MS) % 2 == 0));
+    }
+    // Calibrations: progress box while running, then the result.
+    String progressText;
+    if(isCalibrationHeating()){
+      progressText = "Boiling point calibration\nHeating until the water boils.\nNow: " + formatTemp(currentTemp, "") +
+                     "\n\nTap here to cancel.";
+    }
+    else if(status == 4){
+      progressText = String("PID calibration\n") + pidTuneMessage() + "\nNow: " + formatTemp(currentTemp, "") +
+                     "\n\nTap here to cancel.";
+    }
+    else if(pidTunePhase() == PID_TUNE_DONE || pidTunePhase() == PID_TUNE_FAILED){
+      progressText = String("PID calibration\n") + pidTuneMessage() + "\n\nTap here to close.";
+    }
+    else if(calibration[0] != '\0'){
+      String result = isnan(calibrationTemp) ? String(calibration) : formatTemp(calibrationTemp, calibration);
+      progressText = "Boiling point calibration\n" + result + "\n\nTap here to close.";
+    }
+    if(initCycle || progressText != lastProgressText){
+      ui_set_progress_box(progressText.c_str());
+      lastProgressText = progressText;
+    }
+    // WiFi setup portal: instructions box on the screen.
+    String setupReason = wifiSetupReason();
+    if(initCycle || setupReason != lastSetupReason){
+      ui_set_setup_box(setupReason.c_str());
+      lastSetupReason = setupReason;
     }
     uint32_t blePin = blePairingPin();
     if(blePin != lastBlePin){

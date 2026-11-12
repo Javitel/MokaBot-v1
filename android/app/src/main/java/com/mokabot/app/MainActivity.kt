@@ -80,8 +80,23 @@ class MainActivity : AppCompatActivity() {
 
     private fun showStatus(status: String) = setBusy(false, status)
 
-    private fun failed(e: Exception) =
-        showStatus(getString(R.string.status_failed, e.message ?: e.javaClass.simpleName))
+    /** Shows why connecting failed and, when it helps, what to try. */
+    private fun failed(e: Exception, help: String? = null) {
+        val text = getString(R.string.status_failed, e.message ?: e.javaClass.simpleName)
+        showStatus(if (help == null) text else "$text\n\n$help")
+    }
+
+    /** Hint for a failed Bluetooth connection: pairing is the usual cause. */
+    private fun bluetoothHelp(e: Exception): String? {
+        val message = e.message ?: return null
+        return if ("paired" in message || "write failed" in message || "timed out" in message)
+            getString(R.string.help_pairing) else null
+    }
+
+    /** Hint for a failed WiFi connection: a .local name, or another network. */
+    private fun wifiHelp(host: String): String =
+        if (host.endsWith(".local", ignoreCase = true)) getString(R.string.help_wifi_name, host)
+        else getString(R.string.help_wifi)
 
     // ---- Bluetooth ----
 
@@ -152,7 +167,7 @@ class MainActivity : AppCompatActivity() {
                 prefs().edit().putString(KEY_DEVICE, found.device.address).apply()
                 open(transport)
             } catch (e: Exception) {
-                failed(e)
+                failed(e, bluetoothHelp(e))
             }
         }
     }
@@ -170,7 +185,7 @@ class MainActivity : AppCompatActivity() {
                 // The name is what is saved; the app connects to its address.
                 open(WifiTransport.connect(Discovery.resolve(host)))
             } catch (e: Exception) {
-                failed(e)
+                failed(e, wifiHelp(host))
             }
         }
     }

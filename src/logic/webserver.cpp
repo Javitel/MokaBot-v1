@@ -52,8 +52,28 @@ static bool validDeviceName(const char *name){
 WiFiProvisioner provisioner;
 MokaWebServer *server = nullptr;
 Preferences preferencesWS;
-// Shown on the screen's network button: Bluetooth runs while WiFi is off.
-String ip = "Bluetooth";
+// ---- Network button text -----------------------------------------------------
+// Written by the web server task, read by the screen's label task: a fixed
+// buffer copied under a lock (an Arduino String reassigned on one task while
+// another reads it could be freed under the reader).
+#define NET_TEXT_MAX 48
+static char netText[NET_TEXT_MAX] = NET_TEXT_BLUETOOTH;
+static char netTextCopy[NET_TEXT_MAX];
+static portMUX_TYPE netTextLock = portMUX_INITIALIZER_UNLOCKED;
+
+static void setNetText(const String &text){
+  portENTER_CRITICAL(&netTextLock);
+  strlcpy(netText, text.c_str(), sizeof(netText));
+  portEXIT_CRITICAL(&netTextLock);
+}
+
+// Why the WiFi setup portal is open, for the box on the screen ("" when it
+// is not, see wifiSetupReason()).
+static char setupReason[64] = "";
+
+// Last reason the station was disconnected (WiFi event), to tell a wrong
+// password from a network that is out of reach.
+static volatile int lastDisconnectReason = 0;
 int mokaWifiStatus= 0;
 
 // ---- Cancelling provisioning ----------------------------------------------
@@ -87,9 +107,18 @@ void stopProvisioning(){
 }
 
 void provisioningWifi(){
-  
-  provisioner.getConfig().SHOW_INPUT_FIELD = false; // No additional input field
-    provisioner.getConfig().SHOW_RESET_FIELD = false; // No reset field
+  // The phone joins this network and sees a page to pick the home WiFi.
+  WiFiProvisioner::Config &config = provisioner.getConfig();
+  config.AP_NAME = SETUP_AP_NAME;
+  config.HTML_TITLE = "MokaBot WiFi setup";
+  config.THEME_COLOR = "#6d4c41";
+  config.PROJECT_TITLE = "MokaBot";
+  config.PROJECT_SUB_TITLE = "WiFi setup";
+  config.PROJECT_INFO = "Choose your home WiFi and enter its password. MokaBot works with 2.4 GHz WiFi only.";
+  config.FOOTER_TEXT = "MokaBot";
+  config.CONNECTION_SUCCESSFUL = "MokaBot is connected. Join your home WiFi again on this phone.";
+  config.SHOW_INPUT_FIELD = false; // No additional input field
+  config.SHOW_RESET_FIELD = false; // No reset field
 
   // Set the success callback
     provisioner.onSuccess(
@@ -132,14 +161,53 @@ void webserverService(void *param){
   }
 }
 
-// Tries to connect with the given credentials for ~2.5s.
-static bool connectWiFi(const String &ssid, const String &pass){
-  WiFi.begin(ssid.c_str(), pass.c_str());
-  for(int retries = 0; retries < 25; retries++){
-    if(WiFi.status() == WL_CONNECTED) return true;
-    delay(100);
+// Joining the home WiFi: routers can take several seconds to accept a device
+// (2.5 s, as before, often fell back to the setup portal, which looked like
+// the WiFi being forgotten). Up to WIFI_CONNECT_TIMEOUT_MS, then once more.
+#define WIFI_CONNECT_TIMEOUT_MS 15000
+#define WIFI_CONNECT_ATTEMPTS   2
+
+static void onWifiEvent(arduino_event_id_t event, arduino_event_info_t info){
+  if(event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) lastDisconnectReason = info.wifi_sta_disconnected.reason;
+}
+
+// Short explanation of the last failed connection, for the screen.
+static const char *connectFailure(){
+  switch(lastDisconnectReason){
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+      return "wrong password?";
+    case WIFI_REASON_NO_AP_FOUND:
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+      return "network not found (2.4 GHz?)";
+    default:
+      return "no answer";
   }
-  return WiFi.status() == WL_CONNECTED;
+}
+
+static bool connectWiFi(const String &ssid, const String &pass){
+  static bool eventRegistered = false;
+  if(!eventRegistered){
+    WiFi.onEvent(onWifiEvent);
+    eventRegistered = true;
+  }
+  for(int attempt = 0; attempt < WIFI_CONNECT_ATTEMPTS; attempt++){
+    setNetText("Connecting...");
+    lastDisconnectReason = 0;
+    WiFi.begin(ssid.c_str(), pass.c_str());
+    for(uint32_t waited = 0; waited < WIFI_CONNECT_TIMEOUT_MS; waited += 100){
+      if(WiFi.status() == WL_CONNECTED) return true;
+      // A wrong password does not get better by waiting.
+      if(lastDisconnectReason == WIFI_REASON_AUTH_FAIL) break;
+      delay(100);
+    }
+    if(WiFi.status() == WL_CONNECTED) return true;
+    Serial.printf("WiFi: could not join %s (reason %d)\n", ssid.c_str(), lastDisconnectReason);
+    WiFi.disconnect();
+    delay(500);
+  }
+  return false;
 }
 
 // WiFi and Bluetooth never run together (every board): the screen's network
@@ -152,7 +220,8 @@ static void wifiStarting(){
 static void wifiStopped(){
   WiFi.disconnect();
   WiFi.mode(WIFI_OFF);
-  ip = "Bluetooth";
+  setNetText(NET_TEXT_BLUETOOTH);
+  setupReason[0] = '\0';
   bleStart();
 }
 
@@ -173,13 +242,19 @@ int initNet() {
   String pass = preferencesWS.getString("Password", "");
   preferencesWS.end(); prefsUnlock();
 
-  bool connected = !(ssid.equals("") && pass.equals("")) && connectWiFi(ssid, pass);
+  bool saved = !ssid.equals("");
+  bool connected = saved && connectWiFi(ssid, pass);
+  // Shown in the setup box on the screen: why the portal opened.
+  if(!connected){
+    if(saved) snprintf(setupReason, sizeof(setupReason), "Could not join %s: %s", ssid.c_str(), connectFailure());
+    else strlcpy(setupReason, "No WiFi network saved yet.", sizeof(setupReason));
+  }
   // The provisioning portal blocks until it connects; repeat only if it returns
   // without a connection, unless the user cancelled it.
   provisioningCancelled = false;
   while(!connected){
     WiFi.disconnect();
-    ip = "Provisioning...";
+    setNetText("WiFi setup");
     // The portal needs the radio and memory to itself (see bleStop()).
     bleStop();
     Serial.printf("Provisioning: free heap %u\n", (unsigned)ESP.getFreeHeap());
@@ -190,6 +265,7 @@ int initNet() {
     }
     connected = WiFi.status() == WL_CONNECTED;
   }
+  setupReason[0] = '\0';
 
   serverStart();
   return 0;
@@ -327,7 +403,7 @@ void serverStart(){
 
   if(beginServer()){
     IPAddress localIp = WiFi.localIP();
-    ip = localIp.toString();
+    setNetText("WiFi " + localIp.toString());
     // http://mokabot.local (our own minimal responder, see mdnsResponder.hpp).
     const uint8_t address[4] = { localIp[0], localIp[1], localIp[2], localIp[3] };
     mdnsResponderStart(getDeviceName(), address);
@@ -347,7 +423,7 @@ void serverStart(){
     }
   }
   else{
-    ip = "Server error";
+    setNetText("Server error");
   }
 
   // Release the port so the next start (or provisioning) can bind it.
@@ -419,7 +495,18 @@ void setWifiCredentials(const char *ssid, const char *password){
 }
 
 const char * getIp() {
-  return ip.c_str();
+  portENTER_CRITICAL(&netTextLock);
+  memcpy(netTextCopy, netText, sizeof(netTextCopy));
+  portEXIT_CRITICAL(&netTextLock);
+  return netTextCopy;
+}
+
+const char * wifiSetupReason(void){
+  return provisioning ? setupReason : "";
+}
+
+void getWifiSsidText(char *buffer, int size){
+  strlcpy(buffer, getWifiSsid().c_str(), size);
 }
 int getMokaWifiStatus(){
   return mokaWifiStatus;

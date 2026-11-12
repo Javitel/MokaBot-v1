@@ -4,6 +4,7 @@
 // Project name: MokaBot
 
 #include "ui.h"
+#include "logic/webserver.hpp"
 #include "nvs.h"
 #include "devices/beep.hpp"
 #include "logic/ota.hpp"
@@ -388,6 +389,167 @@ void ui_adjust_power_percent(int delta)
     if(value < POWER_PERCENT_MIN) value = POWER_PERCENT_MIN;
     if(value > POWER_PERCENT_MAX) value = POWER_PERCENT_MAX;
     powerPercent = value;
+}
+
+// ---- WiFi setup box ----------------------------------------------------------
+// On the top layer while the WiFi setup portal runs: why it opened and what
+// to do on the phone. Tapping it cancels the setup (back to Bluetooth).
+static lv_obj_t * ui_SetupBox;
+static lv_obj_t * ui_SetupText;
+
+static void setup_box_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED) stopProvisioning();
+}
+
+void ui_set_setup_box(const char * reason)
+{
+    if(ui_SetupBox == NULL) {
+        if(reason == NULL || reason[0] == '\0') return;
+        ui_SetupBox = lv_obj_create(lv_layer_top());
+        lv_obj_set_size(ui_SetupBox, 440, 250);
+        lv_obj_center(ui_SetupBox);
+        lv_obj_clear_flag(ui_SetupBox, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(ui_SetupBox, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(ui_SetupBox, lv_color_hex(0x202020), LV_PART_MAIN);
+        lv_obj_set_style_border_color(ui_SetupBox, lv_color_hex(0xeb9039), LV_PART_MAIN);
+        lv_obj_set_style_border_width(ui_SetupBox, 3, LV_PART_MAIN);
+        lv_obj_add_event_cb(ui_SetupBox, setup_box_event, LV_EVENT_CLICKED, NULL);
+        ui_SetupText = lv_label_create(ui_SetupBox);
+        lv_obj_set_width(ui_SetupText, 410);
+        lv_label_set_long_mode(ui_SetupText, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_font(ui_SetupText, &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_obj_set_style_text_color(ui_SetupText, lv_color_white(), LV_PART_MAIN);
+        lv_obj_align(ui_SetupText, LV_ALIGN_TOP_LEFT, 0, 0);
+    }
+    if(reason == NULL || reason[0] == '\0') {
+        lv_obj_add_flag(ui_SetupBox, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    lv_label_set_text_fmt(ui_SetupText,
+        "WiFi setup\n%s\n\n"
+        "1. On your phone, join the WiFi \"" SETUP_AP_NAME "\".\n"
+        "2. Pick your home WiFi (2.4 GHz) and type its password.\n\n"
+        "Tap here to cancel and use Bluetooth.", reason);
+    lv_obj_clear_flag(ui_SetupBox, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ---- Confirmation box --------------------------------------------------------
+// A question with OK / Cancel (forgetting the WiFi, starting a calibration).
+// On the top layer, above every page.
+static lv_obj_t * ui_ConfirmBox;
+static lv_obj_t * ui_ConfirmText;
+static lv_obj_t * ui_ConfirmOk;
+static lv_obj_t * ui_ConfirmOkLabel;
+static ui_action_t confirmAction;
+
+static void confirm_box_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    bool ok = (bool)(intptr_t)lv_event_get_user_data(e);
+    lv_obj_add_flag(ui_ConfirmBox, LV_OBJ_FLAG_HIDDEN);
+    if(ok && confirmAction) confirmAction();
+}
+
+static lv_obj_t * confirm_button(const char * text, bool ok, lv_align_t align, lv_obj_t ** label_out)
+{
+    lv_obj_t * button = lv_btn_create(ui_ConfirmBox);
+    lv_obj_set_size(button, 150, 50);
+    lv_obj_align(button, align, 0, 0);
+    lv_obj_set_style_bg_color(button, lv_color_hex(color), LV_PART_MAIN);
+    lv_obj_add_event_cb(button, confirm_box_event, LV_EVENT_CLICKED, (void *)(intptr_t)ok);
+    lv_obj_t * label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_18, LV_PART_MAIN);
+    lv_obj_center(label);
+    if(label_out) *label_out = label;
+    return button;
+}
+
+void ui_confirm(const char * text, const char * ok_text, bool danger, ui_action_t on_ok)
+{
+    if(ui_ConfirmBox == NULL) {
+        ui_ConfirmBox = lv_obj_create(lv_layer_top());
+        lv_obj_set_size(ui_ConfirmBox, 420, 240);
+        lv_obj_center(ui_ConfirmBox);
+        lv_obj_clear_flag(ui_ConfirmBox, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_bg_color(ui_ConfirmBox, lv_color_hex(0x202020), LV_PART_MAIN);
+        lv_obj_set_style_border_width(ui_ConfirmBox, 3, LV_PART_MAIN);
+        ui_ConfirmText = lv_label_create(ui_ConfirmBox);
+        lv_obj_set_width(ui_ConfirmText, 390);
+        lv_label_set_long_mode(ui_ConfirmText, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_font(ui_ConfirmText, &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_obj_set_style_text_color(ui_ConfirmText, lv_color_white(), LV_PART_MAIN);
+        lv_obj_align(ui_ConfirmText, LV_ALIGN_TOP_LEFT, 0, 0);
+        ui_ConfirmOk = confirm_button("OK", true, LV_ALIGN_BOTTOM_LEFT, &ui_ConfirmOkLabel);
+        confirm_button("Cancel", false, LV_ALIGN_BOTTOM_RIGHT, NULL);
+    }
+    confirmAction = on_ok;
+    lv_label_set_text(ui_ConfirmText, text);
+    lv_label_set_text(ui_ConfirmOkLabel, ok_text);
+    // Red for what cannot be undone (forgetting the WiFi).
+    lv_obj_set_style_bg_color(ui_ConfirmOk, lv_color_hex(danger ? 0xd32f2f : color), LV_PART_MAIN);
+    lv_obj_set_style_border_color(ui_ConfirmBox, lv_color_hex(danger ? 0xd32f2f : 0xeb9039), LV_PART_MAIN);
+    lv_obj_clear_flag(ui_ConfirmBox, LV_OBJ_FLAG_HIDDEN);
+}
+
+void ui_ask_forget_wifi(void)
+{
+    static char text[160];
+    char ssid[33];
+    getWifiSsidText(ssid, sizeof(ssid));
+    if(ssid[0] == '\0') snprintf(text, sizeof(text), "No WiFi network is saved.\nForget anyway?");
+    else snprintf(text, sizeof(text), "Forget the WiFi network \"%s\"?\nThe next time WiFi is switched on, the setup starts.", ssid);
+    ui_confirm(text, "Forget", true, ui_forget_wifi_confirmed);
+}
+
+// ---- Progress box ----------------------------------------------------------------
+// A running process (boiling point / PID calibration) and then its result.
+// Tapping it calls ui_progress_box_tapped(): cancels a running process, or
+// closes a result (the same text is not shown again).
+static lv_obj_t * ui_ProgressBox;
+static lv_obj_t * ui_ProgressText;
+static char progressShown[200] = "";
+static char progressDismissed[200] = "";
+
+static void progress_box_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    if(!ui_progress_box_tapped()) {
+        strlcpy(progressDismissed, progressShown, sizeof(progressDismissed));
+        lv_obj_add_flag(ui_ProgressBox, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+void ui_set_progress_box(const char * text)
+{
+    bool empty = text == NULL || text[0] == '\0';
+    if(empty) progressDismissed[0] = '\0';
+    if(ui_ProgressBox == NULL) {
+        if(empty) return;
+        ui_ProgressBox = lv_obj_create(lv_layer_top());
+        lv_obj_set_size(ui_ProgressBox, 420, 220);
+        lv_obj_center(ui_ProgressBox);
+        lv_obj_clear_flag(ui_ProgressBox, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_add_flag(ui_ProgressBox, LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(ui_ProgressBox, lv_color_hex(0x202020), LV_PART_MAIN);
+        lv_obj_set_style_border_color(ui_ProgressBox, lv_color_hex(0xeb9039), LV_PART_MAIN);
+        lv_obj_set_style_border_width(ui_ProgressBox, 3, LV_PART_MAIN);
+        lv_obj_add_event_cb(ui_ProgressBox, progress_box_event, LV_EVENT_CLICKED, NULL);
+        ui_ProgressText = lv_label_create(ui_ProgressBox);
+        lv_obj_set_width(ui_ProgressText, 390);
+        lv_label_set_long_mode(ui_ProgressText, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_font(ui_ProgressText, &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_obj_set_style_text_color(ui_ProgressText, lv_color_white(), LV_PART_MAIN);
+        lv_obj_align(ui_ProgressText, LV_ALIGN_TOP_LEFT, 0, 0);
+    }
+    if(empty || strcmp(text, progressDismissed) == 0) {
+        lv_obj_add_flag(ui_ProgressBox, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+    strlcpy(progressShown, text, sizeof(progressShown));
+    lv_label_set_text(ui_ProgressText, text);
+    lv_obj_clear_flag(ui_ProgressBox, LV_OBJ_FLAG_HIDDEN);
 }
 
 // ---- Bluetooth pairing PIN -----------------------------------------------------
@@ -820,7 +982,8 @@ void ui_Screen1_screen_init(void)
     lv_obj_set_style_text_font(ui_ExtraInfo, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_ButtonIP = lv_btn_create(ui_Screen1);
-    lv_obj_set_width(ui_ButtonIP, 160);
+    // Wide enough for "WiFi 192.168.100.200"; anything longer scrolls.
+    lv_obj_set_width(ui_ButtonIP, 210);
     lv_obj_set_height(ui_ButtonIP, 25);
     lv_obj_set_x(ui_ButtonIP, -100);
     lv_obj_set_y(ui_ButtonIP, -120);
@@ -830,11 +993,13 @@ void ui_Screen1_screen_init(void)
     lv_obj_set_style_bg_color(ui_ButtonIP, lv_color_hex(color), LV_STATE_DEFAULT);
 
     ui_CurrentIPLabel = lv_label_create(ui_ButtonIP);
-    lv_obj_set_width(ui_CurrentIPLabel, LV_SIZE_CONTENT);   /// 1
+    lv_obj_set_width(ui_CurrentIPLabel, 196);
+    lv_label_set_long_mode(ui_CurrentIPLabel, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_set_style_text_align(ui_CurrentIPLabel, LV_TEXT_ALIGN_CENTER, LV_PART_MAIN);
     lv_obj_set_height(ui_CurrentIPLabel, LV_SIZE_CONTENT);    /// 1
     lv_obj_set_align(ui_CurrentIPLabel, LV_ALIGN_CENTER);
     lv_obj_set_align(ui_CurrentIPLabel, LV_ALIGN_CENTER);
-    lv_label_set_text(ui_CurrentIPLabel, "Bluetooth");
+    lv_label_set_text(ui_CurrentIPLabel, NET_TEXT_BLUETOOTH);
     lv_obj_set_style_text_font(ui_CurrentIPLabel, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
 
     ui_ButtonColor = lv_btn_create(ui_Screen1);

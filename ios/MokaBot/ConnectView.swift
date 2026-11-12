@@ -19,11 +19,11 @@ struct ConnectView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section(footer: Text("Connects to the last MokaBot used, or lists them when several are in reach.")) {
+                Section(footer: Text("Only while the MokaBot's network button shows Bluetooth. The first time, type the PIN shown on the MokaBot's screen. Connects to the last MokaBot used, or lists them when several are in reach.")) {
                     Button("Connect via Bluetooth") { connectBluetooth(choose: false) }
                     Button("Choose another device…") { connectBluetooth(choose: true) }
                 }
-                Section(footer: Text("The address shown on the MokaBot screen (IP button), or <name>.local.")) {
+                Section(footer: Text("The address shown on the MokaBot's network button (e.g. 192.168.1.40), or <name>.local. The IP always works.")) {
                     TextField("Address (IP or mokabot.local)", text: $address)
                         .keyboardType(.URL)
                         .textInputAutocapitalization(.never)
@@ -57,9 +57,10 @@ struct ConnectView: View {
         return label
     }
 
-    private func fail(_ error: Error) {
+    private func fail(_ error: Error, help: String? = nil) {
         busy = false
         status = "Could not connect: \(error.localizedDescription)"
+        if let help { status += "\n\n" + help }
     }
 
     /// Without `choose`: connects to the last device used as soon as it is
@@ -103,7 +104,7 @@ struct ConnectView: View {
                 status = ""
                 model.open(transport)
             } catch {
-                fail(error)
+                fail(error, help: "Type the PIN shown on the MokaBot's screen when the iPhone asks. If it keeps failing, forget MokaBot in Settings > Bluetooth and connect again.")
             }
         }
     }
@@ -111,6 +112,7 @@ struct ConnectView: View {
     private func connectWifi() {
         let host = address.trimmingCharacters(in: .whitespaces)
             .replacingOccurrences(of: "http://", with: "")
+            .replacingOccurrences(of: "https://", with: "")
             .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !host.isEmpty else { return }
         address = host
@@ -123,7 +125,9 @@ struct ConnectView: View {
                 status = ""
                 model.open(transport)
             } catch {
-                fail(error)
+                fail(error, help: host.lowercased().hasSuffix(".local")
+                    ? "The iPhone could not find \(host). Use the IP shown on the MokaBot's network button instead."
+                    : "Is the iPhone on the same WiFi as the MokaBot, and does its network button show a WiFi address?")
             }
         }
     }

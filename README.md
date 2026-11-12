@@ -20,7 +20,7 @@ Doing the proper math is possible to keep the pot at a certain pressure. Since p
 ## Features
 List of features
 - Bloom. Based on boiling point (with an offset) is supposed to create enough pressure to soak the coffee bed but not enough to make it flow through the siphon completely.
-- Boiling point calibration (long press PREHEAT: heats until the temperature stops rising, less than 0.5 °C in 3 seconds, and saves the highest reading), or set it from the settings page.
+- Boiling point calibration (long press PREHEAT: heats until the temperature stops rising, at most 0.3 °C in 20 seconds, and saves the highest reading), or set it from the settings page.
 - Preheat is limited to the boiling point plus a negative offset (-2 °C by default, set from the settings page), so the water does not boil before extracting.
 - Save preheat and target temperature (long press OFF).
 - Three modes, selected by swiping the main screen:
@@ -105,15 +105,15 @@ On the device, once connected to WiFi: `http://mokabot.local/` (brew chart), `ht
 
 **First setup**
 1. Flash the firmware over USB: from the browser with the [web installer](https://javitel.github.io/MokaBot-v1/flash.html) (Chrome/Edge on a computer), or with PlatformIO: `pio run -e WT32-SC01-MOKA -t upload` (or `-e WAVESHARE-S3-TOUCH-LCD-3_5B-MOKA`).
-2. Tap the IP button (top left). Without saved WiFi credentials the device opens a setup access point called **"ESP32 Wi-Fi Provisioning"**: connect to it with a phone and choose your network. Tapping the IP button again while the setup portal is open cancels it.
-3. Once connected, the IP button shows the address. The web pages are at `http://mokabot.local/` (brew chart), `/settings` and `/debug`.
+2. Tap the network button (top left, it reads "Bluetooth"). It shows "Connecting..." and tries for up to 15 seconds, twice. Without a saved network, or when it cannot join it, a box on the screen says why (e.g. "wrong password?" or "network not found") and the button reads "WiFi setup" and the device opens a setup WiFi called **"MokaBot-Setup"**: join it with a phone, pick your home WiFi (2.4 GHz only) and type its password. Tapping the box cancels the setup and goes back to Bluetooth. The WiFi network and password can also be set in the settings page (Network tab), also over Bluetooth.
+3. Once connected, the network button shows "WiFi <address>". The web pages are at `http://<address>/` or `http://mokabot.local/` (brew chart), `/settings` and `/debug`. Some browsers (Chrome on Linux, Android before 12) cannot open `.local` names: use the address.
 
 **Buttons** (tap / long press)
 - **OFF**: switch off / save the current target temperature.
-- **PREHEAT**: preheat / calibrate the boiling point (from 5 °C below the theoretical boiling point at your altitude, heats until the water boils; OFF cancels it).
+- **PREHEAT**: preheat / calibrate the boiling point (asks first; from 5 °C below the theoretical boiling point at your altitude, heats until the water boils). A box on the screen shows the calibration (boiling point, or the PID calibration started from the settings page) and then its result; tapping it cancels a running calibration, like OFF.
 - **EXTRACT**: on the extraction page start brewing (tap again to skip the bloom) / brew with a manual bloom phase. On the manual power page start manual power / save the percentage. On the profile page the button reads PREHEAT while the water is below the profile's preheat temperature (tap to preheat to it) and EXTRACT once it is reached (tap to replay the saved brew).
 - **+ / -**: target temperature, power percentage, or saved profile, depending on the page.
-- **IP**: connect or disconnect WiFi / forget the saved WiFi network.
+- **Network button**: switch between WiFi and Bluetooth / forget the saved WiFi network (asks first).
 - **Colour (pencil, top right)**: change the button colour (tap outside the panel to cancel) / check for a firmware update.
 - **°C / °F**: switch units / show or hide decimals.
 - **Swipe left or right**: change page (extraction, manual power, profiles). Changing page switches the moka off.

@@ -149,7 +149,11 @@ void ui_event_Button2(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
     if(event_code == LV_EVENT_LONG_PRESSED) {
-        calibrateBoiling();
+        ui_note_long_press();
+        ui_confirm("Calibrate the boiling point?\n"
+                   "The moka heats until the water boils and saves that temperature "
+                   "(a few minutes). Start it with water in the boiler, from preheat.",
+                   "Start", false, calibrateBoiling);
     }
     else if(event_code == LV_EVENT_SHORT_CLICKED) {
         short_preheat();
@@ -218,15 +222,31 @@ void ui_event_Button5(lv_event_t * e)
     }
 }
 
+// Progress box tapped: a running calibration is cancelled like with OFF.
+bool ui_progress_box_tapped(void)
+{
+    if(isCalibrationHeating() || getMokaStatus() == 4) {
+        short_switch_off();
+        return true;
+    }
+    return false;
+}
+
+void ui_forget_wifi_confirmed(void)
+{
+    if(xSemaphoreTake(xSemaphore, (TickType_t) 50) == pdTRUE) {
+        setMokaWifiStatus(-1);
+        xSemaphoreGive(xSemaphore);
+    }
+}
+
 void ui_event_ButtonIP(lv_event_t * e)
 {
     lv_event_code_t event_code = lv_event_get_code(e);
     if(event_code == LV_EVENT_LONG_PRESSED) {
         ui_note_long_press();
-        if(xSemaphoreTake(xSemaphore, (TickType_t) 50) == pdTRUE) {
-            setMokaWifiStatus(-1);
-            xSemaphoreGive(xSemaphore);
-        }
+        // Erasing the saved network is asked first (see ui_ask_forget_wifi).
+        ui_ask_forget_wifi();
     }
     else if(event_code == LV_EVENT_SHORT_CLICKED) {
         short_wifi_toggle();
