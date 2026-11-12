@@ -116,6 +116,7 @@ On the device, once connected to WiFi: `http://mokabot.local/` (brew chart), `ht
 - **Network button**: switch between WiFi and Bluetooth / forget the saved WiFi network (asks first).
 - **Colour (pencil, top right)**: change the button colour (tap outside the panel to cancel) / check for a firmware update.
 - **°C / °F**: switch units / show or hide decimals.
+- **?**: help on the screen, one page per topic (pages and modes, buttons, brewing, WiFi and Bluetooth, calibration, settings and updates); the arrows go through them.
 - **Swipe left or right**: change page (extraction, manual power, profiles). Changing page switches the moka off.
 
 **Firmware updates (OTA)**

@@ -47,6 +47,7 @@ static lv_obj_t * ui_ColorBackdrop;
 // (the wheel/slider preview the colour live).
 static uint32_t colorBeforeEdit;
 static lv_obj_t * ui_ButtonUnits;
+static lv_obj_t * ui_ButtonHelp;
 static lv_obj_t * ui_LabelUnits;
 //Color Selector Objects
 static lv_obj_t * ui_ColorWheel;
@@ -60,7 +61,7 @@ static volatile bool useFahrenheit = false;
 // Applies the accent colour to every button on the main screen.
 static void apply_button_color(lv_color_t c)
 {
-    lv_obj_t * buttons[] = { ui_ColorSave,ui_Button1, ui_Button2, ui_Button3, ui_Button4, ui_Button5, ui_ButtonIP, ui_ButtonColor, ui_ButtonUnits };
+    lv_obj_t * buttons[] = { ui_ColorSave,ui_Button1, ui_Button2, ui_Button3, ui_Button4, ui_Button5, ui_ButtonIP, ui_ButtonColor, ui_ButtonUnits, ui_ButtonHelp };
     for(size_t i = 0; i < sizeof(buttons) / sizeof(buttons[0]); i++) {
         lv_obj_set_style_bg_color(buttons[i], c, LV_STATE_DEFAULT);
     }
@@ -432,6 +433,134 @@ void ui_set_setup_box(const char * reason)
         "2. Pick your home WiFi (2.4 GHz) and type its password.\n\n"
         "Tap here to cancel and use Bluetooth.", reason);
     lv_obj_clear_flag(ui_SetupBox, LV_OBJ_FLAG_HIDDEN);
+}
+
+// ---- Help ("?" button) ------------------------------------------------------------
+// One page per topic; < and > go through them. Text that does not fit scrolls.
+static const char * const HELP_TITLES[] = {
+    "Pages and modes",
+    "Buttons",
+    "Brewing",
+    "WiFi and Bluetooth",
+    "Calibration",
+    "Settings and updates",
+};
+static const char * const HELP_TEXTS[] = {
+    // Pages and modes
+    "Swipe left or right to change page:\n"
+    "- Extraction: heats to a target temperature and brews.\n"
+    "- Manual power: the heater runs at a fixed power.\n"
+    "- Profiles: replays a saved brew (A, B, C).\n"
+    "Changing page switches the moka off.",
+    // Buttons
+    "Tap / long press:\n"
+    "- OFF: switch off / save the target temperature.\n"
+    "- PREHEAT: preheat / calibrate the boiling point.\n"
+    "- EXTRACT: brew (tap again to skip the bloom) / brew with a manual bloom.\n"
+    "- + / -: target temperature, power or profile.\n"
+    "- Network button (top left): WiFi or Bluetooth / forget the WiFi.",
+    // Brewing
+    "1. PREHEAT heats the water just below the boiling point.\n"
+    "2. EXTRACT starts the brew: an optional bloom, then the extraction.\n"
+    "3. The brew ends by itself when the boiler is about to run dry "
+    "(the temperature climbs past the target).\n"
+    "On the Profiles page EXTRACT replays a saved brew; it reads PREHEAT "
+    "until the water is warm enough.",
+    // WiFi and Bluetooth
+    "The network button switches between Bluetooth and WiFi; they never run together.\n"
+    "- Bluetooth: connect with the MokaBot app. The first time, type the PIN shown here.\n"
+    "- WiFi: the button shows the address; open it in a browser or the app. "
+    "Without a saved network, join the WiFi \"" SETUP_AP_NAME "\" on your phone "
+    "(2.4 GHz home WiFi only).\n"
+    "- Long press: forget the saved WiFi.",
+    // Calibration
+    "- Boiling point: long press PREHEAT, from preheat. The moka heats until the "
+    "water boils and saves that temperature. Do it once, and again if you move "
+    "to another altitude.\n"
+    "- PID: from the settings page (Heating tab), starting from cold water. "
+    "It learns how fast your moka heats.\n"
+    "Tap the box on the screen to cancel either one.",
+    // Settings and updates
+    "- Colour button (pencil): tap to change the colour / long press to check for "
+    "a firmware update.\n"
+    "- \xC2\xB0" "C / \xC2\xB0" "F: tap to switch units / long press to show or hide decimals.\n"
+    "- All the other settings are in the settings page: the app's Settings, "
+    "or <address>/settings in a browser over WiFi.",
+};
+#define HELP_PAGES ((int)(sizeof(HELP_TEXTS) / sizeof(HELP_TEXTS[0])))
+
+static lv_obj_t * ui_HelpBox;
+static lv_obj_t * ui_HelpTitle;
+static lv_obj_t * ui_HelpText;
+static lv_obj_t * ui_HelpScroll;
+static int helpPage = 0;
+
+static void help_show_page(int page)
+{
+    helpPage = (page + HELP_PAGES) % HELP_PAGES;
+    lv_label_set_text_fmt(ui_HelpTitle, "%s  (%d/%d)", HELP_TITLES[helpPage], helpPage + 1, HELP_PAGES);
+    lv_label_set_text(ui_HelpText, HELP_TEXTS[helpPage]);
+    lv_obj_scroll_to_y(ui_HelpScroll, 0, LV_ANIM_OFF);
+}
+
+static void help_button_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) != LV_EVENT_CLICKED) return;
+    int step = (int)(intptr_t)lv_event_get_user_data(e);
+    if(step == 0) lv_obj_add_flag(ui_HelpBox, LV_OBJ_FLAG_HIDDEN);
+    else help_show_page(helpPage + step);
+}
+
+static void help_nav_button(const char * text, int step, lv_align_t align)
+{
+    lv_obj_t * button = lv_btn_create(ui_HelpBox);
+    lv_obj_set_size(button, 110, 45);
+    lv_obj_align(button, align, 0, 0);
+    lv_obj_set_style_bg_color(button, lv_color_hex(color), LV_PART_MAIN);
+    lv_obj_add_event_cb(button, help_button_event, LV_EVENT_CLICKED, (void *)(intptr_t)step);
+    lv_obj_t * label = lv_label_create(button);
+    lv_label_set_text(label, text);
+    lv_obj_set_style_text_font(label, &lv_font_montserrat_18, LV_PART_MAIN);
+    lv_obj_center(label);
+}
+
+static void help_open(void)
+{
+    if(ui_HelpBox == NULL) {
+        ui_HelpBox = lv_obj_create(lv_layer_top());
+        lv_obj_set_size(ui_HelpBox, 470, 310);
+        lv_obj_center(ui_HelpBox);
+        lv_obj_clear_flag(ui_HelpBox, LV_OBJ_FLAG_SCROLLABLE);
+        lv_obj_set_style_pad_all(ui_HelpBox, 8, LV_PART_MAIN);
+        lv_obj_set_style_bg_color(ui_HelpBox, lv_color_hex(0x202020), LV_PART_MAIN);
+        lv_obj_set_style_border_color(ui_HelpBox, lv_color_hex(0xeb9039), LV_PART_MAIN);
+        lv_obj_set_style_border_width(ui_HelpBox, 3, LV_PART_MAIN);
+        ui_HelpTitle = lv_label_create(ui_HelpBox);
+        lv_obj_set_style_text_font(ui_HelpTitle, &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_obj_set_style_text_color(ui_HelpTitle, lv_color_hex(0xeb9039), LV_PART_MAIN);
+        lv_obj_align(ui_HelpTitle, LV_ALIGN_TOP_LEFT, 0, 0);
+        // Scrolls when a page is longer than the box.
+        ui_HelpScroll = lv_obj_create(ui_HelpBox);
+        lv_obj_remove_style_all(ui_HelpScroll);
+        lv_obj_set_size(ui_HelpScroll, 448, 196);
+        lv_obj_align(ui_HelpScroll, LV_ALIGN_TOP_LEFT, 0, 28);
+        lv_obj_set_scroll_dir(ui_HelpScroll, LV_DIR_VER);
+        ui_HelpText = lv_label_create(ui_HelpScroll);
+        lv_obj_set_width(ui_HelpText, 440);
+        lv_label_set_long_mode(ui_HelpText, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_font(ui_HelpText, &lv_font_montserrat_18, LV_PART_MAIN);
+        lv_obj_set_style_text_color(ui_HelpText, lv_color_white(), LV_PART_MAIN);
+        help_nav_button(LV_SYMBOL_LEFT, -1, LV_ALIGN_BOTTOM_LEFT);
+        help_nav_button("Close", 0, LV_ALIGN_BOTTOM_MID);
+        help_nav_button(LV_SYMBOL_RIGHT, 1, LV_ALIGN_BOTTOM_RIGHT);
+    }
+    help_show_page(helpPage);
+    lv_obj_clear_flag(ui_HelpBox, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void help_open_event(lv_event_t * e)
+{
+    if(lv_event_get_code(e) == LV_EVENT_CLICKED) help_open();
 }
 
 // ---- Confirmation box --------------------------------------------------------
@@ -1023,6 +1152,18 @@ void ui_Screen1_screen_init(void)
     lv_obj_set_style_text_font(ui_LabelUnits, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
     lv_obj_center(ui_LabelUnits);
     lv_obj_add_event_cb(ui_ButtonUnits, units_button_event, LV_EVENT_ALL, NULL);
+
+    // Help, under the units button (see help_open).
+    ui_ButtonHelp = lv_btn_create(ui_Screen1);
+    lv_obj_set_size(ui_ButtonHelp, 50, 50);
+    lv_obj_align(ui_ButtonHelp, LV_ALIGN_TOP_RIGHT, -5, 115);
+    lv_obj_clear_flag(ui_ButtonHelp, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_set_style_bg_color(ui_ButtonHelp, lv_color_hex(color), LV_STATE_DEFAULT);
+    lv_obj_t * ui_LabelHelp = lv_label_create(ui_ButtonHelp);
+    lv_label_set_text(ui_LabelHelp, "?");
+    lv_obj_set_style_text_font(ui_LabelHelp, &lv_font_montserrat_18, LV_PART_MAIN | LV_STATE_DEFAULT);
+    lv_obj_center(ui_LabelHelp);
+    lv_obj_add_event_cb(ui_ButtonHelp, help_open_event, LV_EVENT_CLICKED, NULL);
 
     create_color_panel();
     create_ota_popup();
