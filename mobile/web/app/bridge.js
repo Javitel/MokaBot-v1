@@ -19,7 +19,13 @@
 
   // ---- Device requests: fetch("/brewHistory?...") etc. go to MokaBridge.
   var pending = {};
-  var nextId = 1;
+  // Each page load starts its request numbers at a random point: an answer to
+  // a request of the page shown before (still on its way over Bluetooth when
+  // the user switched from Settings to Brew) then matches nothing here and is
+  // dropped, instead of being taken as the answer to this page's request with
+  // the same number (the brew chart was cleared by a /settingsInfo answer).
+  // Below 2^31: the Android app receives the number as an Int.
+  var nextId = 1 + Math.floor(Math.random() * 1000000000);
   var originalFetch = window.fetch.bind(window);
 
   // The pages' own requests: same host, outside the app's /app/ files. (Not
