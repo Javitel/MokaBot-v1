@@ -354,7 +354,44 @@ void setup() {
 
 }
 
+// Serial commands (USB), for tuning without reflashing:
+//   pid <P> <I> <D>   sets and saves the PID gains (like the settings page)
+//   pid?              prints them
+// The moka's PIDLOG lines (see pidUpdate in moka.cpp) show the result.
+static void serialCommand(const char *line){
+  if(strncmp(line, "pid", 3) != 0) return;
+  if(line[3] == ' '){
+    // strtod, not sscanf: scanning floats with sscanf costs ~10 KB of flash.
+    char *end;
+    double values[3];
+    const char *cursor = line + 4;
+    int count = 0;
+    for(; count < 3; count++){
+      values[count] = strtod(cursor, &end);
+      if(end == cursor) break;
+      cursor = end;
+    }
+    if(count == 3 && values[0] >= 0 && values[0] <= 500 && values[1] >= 0 && values[1] <= 1 && values[2] >= 0){
+      setPID(values[0], values[1], values[2]);
+    }
+  }
+  else if(line[3] != '?') return;
+  double pid[3];
+  getPID(pid);
+  Serial.printf("PIDSET,%.3f,%.6f,%.3f\n", pid[0], pid[1], pid[2]);
+}
+
 void loop() {
-  //Serial.println(bmp.readPressure());
-  vTaskDelay(pdMS_TO_TICKS(1000));
+  static char line[64];
+  static size_t length = 0;
+  while(Serial.available()){
+    char c = Serial.read();
+    if(c == '\n' || c == '\r'){
+      line[length] = '\0';
+      if(length) serialCommand(line);
+      length = 0;
+    }
+    else if(length < sizeof(line) - 1) line[length++] = c;
+  }
+  vTaskDelay(pdMS_TO_TICKS(100));
 }

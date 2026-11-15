@@ -101,18 +101,22 @@ double current = 0.0;
 int mokaStatus = 0;
 bool connected=false;
 
-// Defaults from a PID calibration on the WT32-SC01 moka (heating rate 0.412
-// C/s, dead time 22.8 s; held 95 C within +-0.1 C without overshoot, D 0).
-double defaultp = 13.31;
+// Defaults for the WT32-SC01 moka, tuned from recorded brews (the PIDLOG
+// serial log, see pidUpdate): preheat from cold to 96 C arrives within 0.3 C
+// about 30 s after full power ends, and the step to a 106 C extraction
+// overshoots by 0.2-0.7 C. The gains of the PID calibration (P 13.31,
+// I 0.00109: Ti = 8 x dead time) sat a degree below the target for minutes.
+double defaultp = 21.5;
 // I setting: integral gain per degree of (target - room temperature); the
 // PID's Ki is scheduled as i * delta (see estimateIntegral).
-double defaulti = 0.00109;
+double defaulti = 0.0025;
 double defaultd = 0;
 
 // Earlier defaults {P, I, D}. Saving the settings page stores the values it
 // shows, so a device that never changed them may hold one of these: it means
 // "the default" and follows the current one.
 static const double OLD_DEFAULT_PIDS[][3] = {
+  { 13.31, 0.00109, 0 },     // 1.0.4 - 1.0.12
   { 10.2, 0.006, 0.85 },     // 1.0.2 - 1.0.3
   { 40.2, 0.01, 0.085 },     // earlier builds
 };
@@ -128,29 +132,28 @@ double pidValue;
 // Ki starts at 0: estimateIntegral() sets the scheduled value.
 AutoPID myPID(&temperature, &target, &pidValue, 0, timeWindow, defaultp, 0, defaultd);
 
-// Gains last given to the PID (see estimateIntegral).
-static double appliedKp = 0, appliedKi = 0;
-// The gains are divided by the water gain ratio up to this value (an empty
-// boiler heats about twice as fast as a full one).
-#define GAIN_SCHEDULE_MAX_RATIO 2.0
-// Anti-windup. The integral accumulates on the way up from the bang-bang
-// limit (BANG_BELOW_TARGET below the target), and that charge is what holds
-// the temperature on arrival: it must stay. A normal approach leaves
-//   Ki * BANG_BELOW_TARGET * timeWindow / (R * P)   (ms of the window)
-// with R the heating rate at full power. Near and above the boiling point the
-// climb is much slower, the charge grew far beyond that and carried the
-// temperature past the target (at ~106 C by more than the overshoot margin).
-// So while the proportional term alone still asks for more than
-// INTEGRAL_CAP_ABOVE_DUTY, the integral's share of the output is capped at
-// INTEGRAL_CAP_FACTOR times the normal charge. Closer to the target it is
-// free, so it always reaches whatever power holds the temperature.
-#define BANG_BELOW_TARGET       12.0
-#define INTEGRAL_CAP_ABOVE_DUTY 0.15
-#define INTEGRAL_CAP_FACTOR     1.25
-#define PID_NOMINAL_RATE        0.412   // C/s at full power (default calibration)
-static double integralCapMs = 0;
-// A PID step this long after the last one (the moka was OFF) does not count
-// for the integral: AutoPID would add error x the whole pause.
+// Set when heating starts from OFF: the PID's integral is cleared before its
+// next step, so each brew depends only on the target and the room
+// temperature, not on what the brew before left accumulated.
+static volatile bool pidClearPending = false;
+// Raised target while holding a temperature (preheat -> bloom -> extraction,
+// or + on the screen): the integral keeps what it holds and does not
+// accumulate during the climb, until the temperature is within
+// INTEGRAL_PAUSE_END of the new target.
+// What it holds is the power that held the temperature before, and through
+// Ki = i * (target - room) its share of the output already rises with the new
+// target, which is about what the new target needs (recorded: 31 ms held at
+// 96 C, 32 ms needed at 101.3 C). Left to accumulate during the climbs it
+// grew from 16 % to 31 % of the heater power and overshot 106 C by 1.6 C;
+// cleared instead, the climb to the bloom temperature took 98 s.
+// Only when the old target was being held (within INTEGRAL_HOLDING_BAND): a
+// start from cold, or a target changed on the way up, accumulates as usual,
+// since that charge is what holds the temperature on arrival.
+#define INTEGRAL_HOLDING_BAND 2.0
+#define INTEGRAL_PAUSE_END    1.5
+// Ki last given to the PID (for the serial log, see pidUpdate).
+static double scheduledKi = 0;
+// A PID step this long after the last one counts as a resume (see pidUpdate).
 #define PID_RESUME_MS 2000
 
 Preferences MokaPreferences;
@@ -493,7 +496,7 @@ void saveResistorValues(double newR, double newA, double newB, double newC){
 
 void init() {
 //Wire.setTimeOut(100);
-myPID.setBangBang(BANG_BELOW_TARGET,1);
+myPID.setBangBang(12,1);
 pinMode(pinHeater, OUTPUT);
 digitalWrite(pinHeater,getrelayStatus(LOW));
 //ads.setGain(GAIN_TWOTHIRDS);
@@ -815,11 +818,7 @@ BaseType_t xWasDelayed;
     if(getMokaStatus() == 1 || getMokaStatus() == 2){
       double rate = 0, duty = 0;
       bool windowDone = waterEstimateStep(&rate, &duty);
-      if(getMokaStatus() == 2){
-        // New water gain ratio: the gains follow it.
-        if(windowDone) estimateIntegral();
-        checkBrewEnd(windowDone, rate, duty);
-      }
+      if(getMokaStatus() == 2) checkBrewEnd(windowDone, rate, duty);
     }
     if(getMokaStatus() == 2 && brewstart == false && (current) >= getCalibratedTemp()+ bloomOffset){
       brewstart = true;
@@ -1064,17 +1063,43 @@ static void manualPowerUpdate(){
  void pidUpdate(){
    running = true;
    temperature=current;
+   // The first step after a pause (the moka was OFF) does not count for the
+   // integral: AutoPID would add error x the whole pause to it.
    static uint32_t lastRunMs = 0;
    uint32_t now = millis();
    bool resumed = now - lastRunMs > PID_RESUME_MS;
    lastRunMs = now;
+   // Target the PID followed on its last step, and whether the integral is
+   // paused for a climb to a raised one (see INTEGRAL_HOLDING_BAND).
+   static double trackedTarget = NAN;
+   static bool integralPaused = false;
+   if(pidClearPending){
+     pidClearPending = false;
+     myPID.reset();
+     trackedTarget = target;
+     integralPaused = false;
+   }
+   if(isnan(trackedTarget)) trackedTarget = target;
+   if(target > trackedTarget + 0.05){
+     if(fabs(trackedTarget - temperature) <= INTEGRAL_HOLDING_BAND) integralPaused = true;
+   }
+   else if(target < trackedTarget - 0.05) integralPaused = false;
+   trackedTarget = target;
+   if(target - temperature <= INTEGRAL_PAUSE_END) integralPaused = false;
    double integralBefore = myPID.getIntegral();
    myPID.run();
-   if(resumed) myPID.setIntegral(integralBefore);
-   // Anti-windup (see INTEGRAL_CAP_FACTOR).
-   else if(appliedKi > 0 && appliedKp * (target - temperature) > INTEGRAL_CAP_ABOVE_DUTY * timeWindow
-           && appliedKi * myPID.getIntegral() > integralCapMs){
-     myPID.setIntegral(integralCapMs / appliedKi);
+   if(resumed || integralPaused) myPID.setIntegral(integralBefore);
+   // Serial log, once a second while the PID runs, to tune the gains from
+   // recorded runs: time (ms), status, temperature, target, output (fraction
+   // of the window), the P and I shares of the output (ms of the window), room
+   // temperature, the P, I, D settings, and 1 while the integral is paused.
+   static uint8_t logDivider = 0;
+   if(++logDivider >= 4){
+     logDivider = 0;
+     Serial.printf("PIDLOG,%lu,%d,%.2f,%.2f,%.3f,%.1f,%.1f,%.1f,%.3f,%.6f,%.3f,%d\n",
+                   (unsigned long)now, mokaStatus, temperature, target, pidValue / timeWindow,
+                   p * (target - temperature), scheduledKi * myPID.getIntegral(),
+                   (double)getAmbientTemp(), p, i, d, integralPaused ? 1 : 0);
    }
    double onTime = pidValue * gain;
    heaterDuty = onTime <= 0 ? 0 : (onTime >= timeWindow ? 1 : onTime / timeWindow);
@@ -1186,6 +1211,8 @@ int getMokaStatus(){
 //0 OFF, 1 HEAT, 2 BOIL
 void setMokaStatus(int status){
   changePending = true;
+  // A brew starts with a clean PID (see pidClearPending).
+  if(mokaStatus == 0 && status != 0) pidClearPending = true;
   mokaStatus = status;
   // Any status change ends a profile brew or a calibration (profileBrewOn
   // and calibrationHeatingOn set them again).
@@ -1291,33 +1318,16 @@ void setResistorValues(double newR, double newA, double newB, double newC){
   MokaPreferences.end(); prefsUnlock(); 
 }
 
-// Gains for the current target and water level. Called on every target
-// change, when the PID settings are saved and after each water window of an
-// extraction.
-//  - Ki follows the heat loss, which grows with the difference between the
-//    target and the room: Ki = i (the "I" setting, per degree) * delta.
-//  - While extracting, water leaves the boiler: the same power heats less
-//    mass, so the loop gets stronger (see waterGainRatio, a / a0). P, Ki and
-//    D are divided by that ratio, which keeps the loop as calibrated with a
-//    full boiler; higher targets empty it sooner and oscillated without it.
-// A Ki change rescales the accumulated integral, so the integral's share of
-// the output (Ki * integral) does not jump.
+// Schedules Ki with the heat loss, which grows with the difference between
+// the target and the room: Ki = i (the "I" setting, per degree) * delta.
+// Called on every target change and when the PID settings are saved.
 void estimateIntegral(){
+  // Without a valid room temperature (sensor fault) 25 C is assumed: a NaN
+  // here would make Ki, and with it the PID output, NaN.
   float ambient = getAmbientTemp();
   if(isnan(ambient) || ambient < -20 || ambient > 60) ambient = 25;
   double delta = target - ambient;
   if(delta < 0) delta = 0;
-  double scale = 1;
-  float ratio = waterGainRatio;
-  if(mokaStatus == 2 && !isnan(ratio) && ratio > 1){
-    scale = 1 / (ratio < GAIN_SCHEDULE_MAX_RATIO ? ratio : GAIN_SCHEDULE_MAX_RATIO);
-  }
-  double ki = i * delta * scale;
-  if(appliedKi > 0 && ki > 0 && ki != appliedKi) myPID.setIntegral(myPID.getIntegral() * appliedKi / ki);
-  // From the unscaled gains: the output share that holds a temperature does
-  // not depend on the water level.
-  integralCapMs = p > 0 ? INTEGRAL_CAP_FACTOR * i * delta * BANG_BELOW_TARGET * timeWindow / (PID_NOMINAL_RATE * p) : 0;
-  appliedKp = p * scale;
-  appliedKi = ki;
-  myPID.setGains(appliedKp, ki, d * scale);
+  scheduledKi = i * delta;
+  myPID.setGains(p, scheduledKi, d);
 }
