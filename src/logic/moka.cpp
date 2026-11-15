@@ -109,7 +109,7 @@ bool connected=false;
 double defaultp = 21.5;
 // I setting: integral gain per degree of (target - room temperature); the
 // PID's Ki is scheduled as i * delta (see estimateIntegral).
-double defaulti = 0.0025;
+double defaulti = 0.0028;
 double defaultd = 0;
 
 // Earlier defaults {P, I, D}. Saving the settings page stores the values it
