@@ -1,6 +1,6 @@
 {
   "name": "MokaBot (Guition JC3248W535)",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "new_install_prompt_erase": true,
   "builds": [
     {
@@ -19,7 +19,7 @@
           "offset": 57344
         },
         {
-          "path": "jc3248w535.bin?v=b8d571ff069d",
+          "path": "jc3248w535.bin?v=10cc30b047a1",
           "offset": 65536
         }
       ]

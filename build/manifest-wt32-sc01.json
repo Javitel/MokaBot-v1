@@ -1,6 +1,6 @@
 {
   "name": "MokaBot (WT32-SC01)",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "new_install_prompt_erase": true,
   "builds": [
     {
@@ -19,7 +19,7 @@
           "offset": 57344
         },
         {
-          "path": "wt32-sc01.bin?v=b1dc84bbf2ef",
+          "path": "wt32-sc01.bin?v=32e5ad700224",
           "offset": 65536
         }
       ]

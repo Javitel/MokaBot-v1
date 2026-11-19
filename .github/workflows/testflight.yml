@@ -37,7 +37,8 @@ jobs:
   testflight:
     needs: changes
     if: github.event_name == 'workflow_dispatch' || needs.changes.outputs.ios == 'true'
-    # App Store Connect only accepts apps built with the iOS 26 SDK (Xcode 26).
+    # The newest macOS image: it carries the newest Xcode (see "Select the
+    # newest Xcode"). App Store Connect requires a recent iOS SDK.
     runs-on: macos-26
     env:
       BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
@@ -46,13 +47,28 @@ jobs:
       ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
     steps:
       - uses: actions/checkout@v4
-      - name: Select Xcode 26
+      # The newest Xcode on the runner. App Store Connect only accepts apps
+      # built with a recent SDK: iOS 26 now, iOS 27 (Xcode 27) from April
+      # 2027. An older Xcode fails the upload (below the current minimum) or
+      # warns (below the next one).
+      - name: Select the newest Xcode
+        env:
+          MIN_XCODE: "26"            # required now
+          NEXT_XCODE: "27"           # required from April 2027
         run: |
-          xcode=$(ls -d /Applications/Xcode_26*.app 2>/dev/null | sort -V | tail -1)
+          ls -d /Applications/Xcode_*.app
+          xcode=$(ls -d /Applications/Xcode_*.app 2>/dev/null | grep -E 'Xcode_[0-9]+(\.[0-9]+)*\.app$' | sort -V | tail -1)
           if [ -z "$xcode" ]; then
-            echo "::error::No Xcode 26 on this runner (App Store Connect requires the iOS 26 SDK)"
-            ls -d /Applications/Xcode*.app
+            echo "::error::No Xcode found on this runner"
             exit 1
+          fi
+          major=$(basename "$xcode" | sed -E 's/^Xcode_([0-9]+).*/\1/')
+          if [ "$major" -lt "$MIN_XCODE" ]; then
+            echo "::error::Newest Xcode here is $(basename "$xcode"); App Store Connect requires Xcode $MIN_XCODE or newer"
+            exit 1
+          fi
+          if [ "$major" -lt "$NEXT_XCODE" ]; then
+            echo "::warning::Building with $(basename "$xcode"); from April 2027 App Store Connect requires Xcode $NEXT_XCODE (iOS $NEXT_XCODE SDK). Use a newer runner image (runs-on) before then."
           fi
           sudo xcode-select -s "$xcode"
           xcodebuild -version

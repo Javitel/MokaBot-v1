@@ -149,6 +149,7 @@ static String retrieveSettings() {
   appendJson(json, "PreheatOffset", getPreheatOffset());
   // Celsius; the page shows it in Fahrenheit when the screen uses it.
   appendJson(json, "OvershootMargin", getOvershootMargin());
+  appendJson(json, "OvershootSeconds", getOvershootSeconds(), 0);
   appendJson(json, "LowWaterRatio", getLowWaterRatio(), 1);
   appendJson(json, "HeaterPower", getHeaterPower(), 0);
   appendJson(json, "PidTuneOffset", getPidTuneOffset(), 1);
@@ -228,6 +229,8 @@ static void applySettings(const ApiArgs &args) {
   if (readArg(args, "PreheatOffset", -1e9, value)) setPreheatOffset(value);
   // Celsius (converted by the page); clamped to 0.5..10 by setOvershootMargin().
   if (readArg(args, "OvershootMargin", 0.0, value)) setOvershootMargin(value);
+  // Window in seconds, clamped to 0..60 by setOvershootSeconds().
+  if (readArg(args, "OvershootSeconds", 0.0, value)) setOvershootSeconds(value);
   // 0 = off; otherwise clamped to 1.2..5 by setLowWaterRatio().
   if (readArg(args, "LowWaterRatio", 0.0, value)) setLowWaterRatio(value);
   // Clamped to 10..100 % by setHeaterPower().

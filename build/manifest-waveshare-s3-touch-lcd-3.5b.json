@@ -1,6 +1,6 @@
 {
   "name": "MokaBot (Waveshare ESP32-S3-Touch-LCD-3.5B)",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "new_install_prompt_erase": true,
   "builds": [
     {
@@ -19,7 +19,7 @@
           "offset": 57344
         },
         {
-          "path": "waveshare-s3-touch-lcd-3.5b.bin?v=797d9305e303",
+          "path": "waveshare-s3-touch-lcd-3.5b.bin?v=4a7151eb36db",
           "offset": 65536
         }
       ]

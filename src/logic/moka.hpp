@@ -35,6 +35,11 @@ double getPreheatOffset();
 // Preferences.
 void setOvershootMargin(double degrees);
 double getOvershootMargin();
+// Overshoot window (s): the brew ends when the temperature was above the
+// overshoot margin for more than half of the last this many seconds; 0-60,
+// 0 = at once. Saved.
+void setOvershootSeconds(double seconds);
+double getOvershootSeconds();
 // Why the last extraction (normal or profile) ended by itself, until the next
 // status change: BREW_STOP_NONE, BREW_STOP_OVERSHOOT (above target + overshoot
 // margin) or BREW_STOP_LOW_WATER (boiler heating much faster than at the

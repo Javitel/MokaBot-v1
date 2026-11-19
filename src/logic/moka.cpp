@@ -56,12 +56,64 @@ double preheatOffset = -2;
 #define PREHEAT_OFFSET_MAX 0.0
 
 // Extraction (normal or profile): once the target has been reached
-// (targetReached), a temperature more than this above it means the boiler is
-// running low on water (less water, the PID overshoots) and the brew ends.
-// Saved in Preferences, set from the settings page.
-double overshootMargin = 2;
+// (targetReached), a temperature more than this above it for more than half
+// of the last overshootSeconds means the boiler is running low on water (the
+// temperature climbs while the PID has cut the heater) and the brew ends.
+// Both saved in Preferences, set from the settings page.
+// 0.5 C: recorded brews with the per-target PID preset overshot by at most
+// 0.41 C, and the boiler running dry went past 106.5 C at a 106 C target.
+double overshootMargin = 0.5;
 #define OVERSHOOT_MARGIN_MIN 0.5
 #define OVERSHOOT_MARGIN_MAX 10.0
+// The default of earlier versions: a device that saved its settings holds it
+// and follows the current default instead.
+#define OVERSHOOT_MARGIN_OLD_DEFAULT 2.0
+// Readings jump by a few tenths for a moment (one went over 106.5 C and came
+// straight back), so a window: the seconds above the margin among the last
+// overshootSeconds must be more than half. "In a row" missed a boiler running
+// dry whose reading kept dipping just under the margin (above for 1-4 s at a
+// time); a lone spike is 1 s of 10. 0 = at once.
+double overshootSeconds = 10;
+#define OVERSHOOT_SECONDS_MAX 60
+// One flag per second (above the margin at any reading of that second).
+static bool overshootSecondAbove[OVERSHOOT_SECONDS_MAX];
+static uint32_t overshootSecond = 0;     // millis() / 1000 of the newest flag
+static int overshootSecondsFilled = 0;   // flags recorded since the reset
+
+static void overshootWindowReset(){
+  overshootSecondsFilled = 0;
+}
+
+// Records whether the temperature is above the margin now; returns the
+// seconds above among the last `window` (the current second included).
+static int overshootWindowAdd(bool above, int window){
+  uint32_t second = millis() / 1000;
+  if(overshootSecondsFilled == 0 || second != overshootSecond){
+    // New second(s); seconds without a reading count as not above.
+    uint32_t gap = overshootSecondsFilled == 0 ? 1 : second - overshootSecond;
+    if(gap > OVERSHOOT_SECONDS_MAX) gap = OVERSHOOT_SECONDS_MAX;
+    for(uint32_t k = 1; k <= gap; k++){
+      overshootSecondAbove[(overshootSecond + k) % OVERSHOOT_SECONDS_MAX] = false;
+    }
+    if(overshootSecondsFilled == 0) overshootSecondAbove[second % OVERSHOOT_SECONDS_MAX] = false;
+    overshootSecond = second;
+    overshootSecondsFilled += gap;
+    if(overshootSecondsFilled > OVERSHOOT_SECONDS_MAX) overshootSecondsFilled = OVERSHOOT_SECONDS_MAX;
+  }
+  if(above) overshootSecondAbove[second % OVERSHOOT_SECONDS_MAX] = true;
+  int count = 0;
+  int span = window < overshootSecondsFilled ? window : overshootSecondsFilled;
+  for(int k = 0; k < span; k++){
+    if(overshootSecondAbove[(second + OVERSHOOT_SECONDS_MAX - k) % OVERSHOOT_SECONDS_MAX]) count++;
+  }
+  return count;
+}
+
+static double clampOvershootSeconds(double seconds){
+  if(isnan(seconds) || seconds < 0) return 0;
+  if(seconds > OVERSHOOT_SECONDS_MAX) return OVERSHOOT_SECONDS_MAX;
+  return round(seconds);
+}
 
 static double clampOvershootMargin(double degrees){
   if(degrees < OVERSHOOT_MARGIN_MIN) return OVERSHOOT_MARGIN_MIN;
@@ -377,8 +429,9 @@ static void endBrew(int reason, const char *why){
 //  1. gain ratio a/a0 above lowWaterRatio for WATER_HIGH_WINDOWS windows;
 //  2. free heating: rising fast with almost no heater duty;
 //  3. overshoot: once the target is reached, more than overshootMargin above
-//     it. A new target (bloom -> boil, a step of a profile) has to be reached
-//     again; after a step down that means cooling into the band first.
+//     it for more than half of the last overshootSeconds. A new target (bloom
+//     -> boil, a step of a profile) has to be reached again; after a step
+//     down that means cooling into the band first.
 // Rules 1 and 2 are off when lowWaterRatio is 0.
 static void checkBrewEnd(bool windowDone, double rate, double duty){
   if(windowDone && lowWaterRatio > 0){
@@ -398,14 +451,22 @@ static void checkBrewEnd(bool windowDone, double rate, double duty){
   if(target != reachedTarget){
     targetReached = false;
     reachedTarget = target;
+    overshootWindowReset();
   }
   if(!targetReached){
     if(current >= target && current <= target + overshootMargin) targetReached = true;
   }
-  else if(current > target + overshootMargin){
-    char why[64];
-    snprintf(why, sizeof(why), "overshoot (%.1f C > %.1f + %.1f C)", current, target, overshootMargin);
-    endBrew(BREW_STOP_OVERSHOOT, why);
+  else{
+    bool above = current > target + overshootMargin;
+    int window = (int)overshootSeconds;
+    int secondsAbove = overshootWindowAdd(above, window);
+    if(above && (window == 0 || secondsAbove * 2 > window)){
+      char why[96];
+      snprintf(why, sizeof(why), "overshoot (%.1f C > %.1f + %.1f C, %d of the last %d s)", current, target,
+               overshootMargin, secondsAbove, window);
+      overshootWindowReset();
+      endBrew(BREW_STOP_OVERSHOOT, why);
+    }
   }
 }
 
@@ -530,6 +591,8 @@ void recoverBrewSettings(){
   manualCutoffAboveBoiling = clampManualCutoff(MokaPreferences.getInt("cutoffAbove", manualCutoffAboveBoiling));
   preheatOffset = clampPreheatOffset(MokaPreferences.getFloat("preheatOffset", preheatOffset));
   overshootMargin = clampOvershootMargin(MokaPreferences.getFloat("overshoot", overshootMargin));
+  if(fabs(overshootMargin - OVERSHOOT_MARGIN_OLD_DEFAULT) < 0.01) overshootMargin = 0.5;
+  overshootSeconds = clampOvershootSeconds(MokaPreferences.getFloat("overshootSec", overshootSeconds));
   lowWaterRatio = clampLowWaterRatio(MokaPreferences.getFloat("lowWaterRatio", lowWaterRatio));
   heaterPower = clampHeaterPower(MokaPreferences.getFloat("heaterPower", heaterPower));
   pidTuneOffset = clampPidTuneOffset(MokaPreferences.getFloat("pidTuneOffset", pidTuneOffset));
@@ -999,6 +1062,17 @@ void setOvershootMargin(double degrees){
 
 double getOvershootMargin(){
   return overshootMargin;
+}
+
+void setOvershootSeconds(double seconds){
+    prefsLock(); MokaPreferences.begin("my-app", false);
+    overshootSeconds = clampOvershootSeconds(seconds);
+    MokaPreferences.putFloat("overshootSec", overshootSeconds);
+    MokaPreferences.end(); prefsUnlock();
+}
+
+double getOvershootSeconds(){
+  return overshootSeconds;
 }
 
 int getBrewStopReason(){
