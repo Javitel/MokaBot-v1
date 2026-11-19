@@ -65,6 +65,9 @@ void setPidTuneOffset(double degrees);
 double getPidTuneOffset();
 // Heater on-time fraction (0..1) of the last PID / manual power window.
 float getHeaterDuty();
+// Average heater activation (0-1) since the last call: every on-time of the
+// 250 ms windows in between counts, short pulses included (the debug page).
+float getHeaterAverage();
 // Heating gain now / at the start of the extraction (1 = as full; higher =
 // less water); NAN until known.
 float getWaterGainRatio();
@@ -72,6 +75,12 @@ float getWaterGainRatio();
 // in Preferences.
 void setLowWaterRatio(double ratio);
 double getLowWaterRatio();
+// Heater power while preheating and extracting, 10-100 % of the full
+// heater (saved). A replayed profile uses the power saved with it.
+void setHeaterPower(double percent);
+double getHeaterPower();
+// The power in use now (the replayed profile's or the setting's), %.
+double getActiveHeaterPower();
 // Highest preheat target: boiling point (current pressure) + preheat offset,
 // at most 110 C.
 float getHeatingLimit();
@@ -84,12 +93,17 @@ void brewMokaManual(double time);
 // Extraction driven by a saved profile: the PID follows the target given with
 // setProfileTarget() (no bloom/boiling targets) until the status changes.
 // Refuses to start without a valid temperature reading.
-void profileBrewOn(float firstTarget);
+void profileBrewOn(float firstTarget, int heaterPercent);
 void setProfileTarget(float temp);
 void setBloomTime(double overrideTime);
 void setBloomOffset(double overrideTime);
 // Setpoint the PID is currently driving to.
 float getPidTarget();
+// The last PID step: its P and I shares of the heater output (% of the
+// window; their sum, limited to 0-100, is the output) and whether the
+// integral is held at its preset. False when the PID is not driving the
+// heater (OFF, manual power): the values are then stale.
+bool getPidState(float *pPercent, float *iPercent, bool *integralPaused);
 float getTargetBoilingTemp();
 float getTargetHeatingTemp();
 void setTargetBoilingTemp(float temp);

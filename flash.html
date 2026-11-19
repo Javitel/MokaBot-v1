@@ -4,9 +4,9 @@
   <title>MokaBot Installer</title>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <!-- ESP Web Tools: Web Serial flashing (esptool-js) with chip detection.
-       It picks the build for the connected chip from build/manifest.json,
-       which `pio run` writes (see ota-images.py). -->
+  <!-- ESP Web Tools: Web Serial flashing (esptool-js). The board is chosen on
+       the page: build/boards.json lists them, each with its own manifest
+       build/manifest-<board>.json. `pio run` writes both (see ota-images.py). -->
   <script type="module" src="https://unpkg.com/esp-web-tools@10.0.1/dist/web/install-button.js?module"></script>
   <style>
     body {
@@ -34,6 +34,8 @@
       text-align: center;
       margin: 12px 0;
     }
+    .note { font-size: 0.9em; }
+    [hidden] { display: none !important; }
     .warning {
       color: #b00020;
     }
@@ -47,16 +49,17 @@
   <p id="version">Firmware installer</p>
 
   <fieldset>
-    <legend>Supported boards</legend>
-    <ul>
-      <li>WT32-SC01 (<strong>not</strong> the WT32-SC01 Plus)</li>
-      <li>Waveshare ESP32-S3-Touch-LCD-3.5B</li>
-    </ul>
-    The board is detected when it connects; the matching firmware is installed.
+    <legend>1. Choose your board</legend>
+    <!-- Filled from build/boards.json by the script below. -->
+    <div id="boards">Loading the boards...</div>
+    <p class="note">Two of these boards use the same chip, so the board cannot be
+      detected: choosing the wrong one installs a firmware that shows nothing on
+      its screen. If that happens, choose the right one and install again.
+      The WT32-SC01 is <strong>not</strong> the WT32-SC01 Plus.</p>
   </fieldset>
 
   <fieldset>
-    <legend>Install</legend>
+    <legend>2. Install</legend>
     <ol>
       <li>Connect the board to this computer with a USB data cable.</li>
       <li>Press the button and choose the board's serial port.</li>
@@ -65,8 +68,9 @@
         WiFi, settings, calibration and saved brews.</li>
     </ol>
     <div class="install">
-      <!-- manifest set by the script below, with a cache-busting query. -->
-      <esp-web-install-button id="installButton">
+      <!-- Shown, with the chosen board's manifest, once a board is chosen. -->
+      <p id="chooseFirst" class="warning">Choose your board above first.</p>
+      <esp-web-install-button id="installButton" hidden>
         <span slot="unsupported" class="warning">
           This browser cannot flash boards: use Chrome, Edge or Opera on a computer.
         </span>
@@ -94,18 +98,47 @@
     colour button on the screen, or upload the .bin from the settings page.</p>
 
   <script>
-    // A fresh query on every visit, so the browser never reuses a cached
-    // manifest (its part paths carry a hash of each image for the same reason).
-    var manifestUrl = "build/manifest.json?t=" + Date.now();
-    document.getElementById("installButton").manifest = manifestUrl;
+    // The boards and their manifests come from build/boards.json (written by
+    // ota-images.py). A fresh query on every visit, so the browser never
+    // reuses a cached list or manifest (the manifests' part paths carry a hash
+    // of each image for the same reason).
+    var stamp = "?t=" + Date.now();
+    var installButton = document.getElementById("installButton");
+    var boardsBox = document.getElementById("boards");
 
-    // Shows the firmware version from the manifest under the title.
-    fetch(manifestUrl, { cache: "no-store" })
+    function chooseBoard(board) {
+      installButton.manifest = "build/" + board.manifest + stamp;
+      installButton.hidden = false;
+      document.getElementById("chooseFirst").hidden = true;
+      document.getElementById("version").textContent =
+        "Firmware installer · " + board.label + " · version " + board.version;
+    }
+
+    fetch("build/boards.json" + stamp, { cache: "no-store" })
       .then(function (r) { return r.ok ? r.json() : Promise.reject(r.status); })
-      .then(function (manifest) {
-        document.getElementById("version").textContent = "Firmware installer · version " + manifest.version;
+      .then(function (list) {
+        boardsBox.textContent = "";
+        list.boards.forEach(function (board, index) {
+          var label = document.createElement("label");
+          var radio = document.createElement("input");
+          radio.type = "radio";
+          radio.name = "board";
+          radio.id = "board" + index;
+          radio.addEventListener("change", function () { chooseBoard(board); });
+          label.appendChild(radio);
+          label.appendChild(document.createTextNode(" " + board.label + " (" + board.chipFamily + ")"));
+          boardsBox.appendChild(label);
+          boardsBox.appendChild(document.createElement("br"));
+        });
+        if (list.boards.length) {
+          document.getElementById("version").textContent =
+            "Firmware installer · version " + list.boards[0].version;
+        }
       })
-      .catch(console.error);
+      .catch(function (error) {
+        console.error(error);
+        boardsBox.textContent = "Could not load the list of boards. Reload the page.";
+      });
   </script>
 </body>
 </html>

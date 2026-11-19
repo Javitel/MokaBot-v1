@@ -1,0 +1,28 @@
+{
+  "name": "MokaBot (WT32-SC01)",
+  "version": "1.0.14",
+  "new_install_prompt_erase": true,
+  "builds": [
+    {
+      "chipFamily": "ESP32",
+      "parts": [
+        {
+          "path": "wt32-sc01/bootloader.bin?v=1294edb6fcd0",
+          "offset": 4096
+        },
+        {
+          "path": "wt32-sc01/partitions.bin?v=0a8b5720e7b7",
+          "offset": 32768
+        },
+        {
+          "path": "wt32-sc01/boot_app0.bin?v=f94c5d786a7a",
+          "offset": 57344
+        },
+        {
+          "path": "wt32-sc01.bin?v=b1dc84bbf2ef",
+          "offset": 65536
+        }
+      ]
+    }
+  ]
+}

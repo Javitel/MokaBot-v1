@@ -22,6 +22,8 @@
 #ifndef OTA_FIRMWARE_FILE
 #if defined(BOARD_WAVESHARE_S3_TOUCH_LCD_35B)
 #define OTA_FIRMWARE_FILE "waveshare-s3-touch-lcd-3.5b.bin"
+#elif defined(BOARD_JC3248W535)
+#define OTA_FIRMWARE_FILE "jc3248w535.bin"
 #else
 #define OTA_FIRMWARE_FILE "wt32-sc01.bin"
 #endif

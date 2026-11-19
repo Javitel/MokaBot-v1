@@ -141,11 +141,13 @@ jobs:
             artifacts/firmware/wt32-sc01.version
             artifacts/firmware/waveshare-s3-touch-lcd-3.5b.bin
             artifacts/firmware/waveshare-s3-touch-lcd-3.5b.version
+            artifacts/firmware/jc3248w535.bin
+            artifacts/firmware/jc3248w535.version
             artifacts/android/mokabot.apk
             artifacts/ios/MokaBot-unsigned.ipa
 
   pages:
-    # The web installer: flash.html with build/ (manifest.json and the
+    # The web installer: flash.html with build/ (boards.json, a manifest per board and the
     # bootloader, partition table and app of each board) next to it. Browsers
     # cannot fetch release files from another site, so they are served here.
     needs: firmware

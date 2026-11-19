@@ -5,6 +5,7 @@
 
 #include "ui.h"
 #include "logic/webserver.hpp"
+#include "games/gameboy.hpp"
 #include "nvs.h"
 #include "devices/beep.hpp"
 #include "logic/ota.hpp"
@@ -950,6 +951,8 @@ static void screen_gesture_event(lv_event_t * e)
     lv_dir_t dir = lv_indev_get_gesture_dir(lv_indev_get_act());
     if(dir == LV_DIR_LEFT) switch_page(1, LV_SCR_LOAD_ANIM_MOVE_LEFT);
     else if(dir == LV_DIR_RIGHT) switch_page(-1, LV_SCR_LOAD_ANIM_MOVE_RIGHT);
+    // Easter egg (boards with an SD card): swipe down for the Game Boy.
+    else if(dir == LV_DIR_BOTTOM) gameboyOpen();
     else return;
     // The swipe must not also count as a click on the button it started on.
     lv_indev_wait_release(lv_indev_get_act());

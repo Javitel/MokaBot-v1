@@ -47,7 +47,8 @@ static SemaphoreHandle_t historyMutex = NULL;
 typedef struct {
   uint32_t magic;
   uint8_t  mode;       // 2 extraction, 3 manual power
-  uint8_t  power;      // manual power percentage (0 = not recorded, older files)
+  uint8_t  power;      // manual power percentage, or the heater power of an
+                       // extraction (0 = not recorded, older files)
   uint16_t count;      // samples that follow
 } SlotHeader;
 
@@ -145,8 +146,9 @@ static void historyTask(void *param){
       sessionMode = status;
       totalSamples = 0;
       sessionStartMs = millis();
-      // Saved with the brew, for replaying it as a profile.
-      sessionPower = (uint8_t)getManualPower();
+      // Saved with the brew, for replaying it as a profile: the manual power
+      // percentage, or the heater power the extraction ran with.
+      sessionPower = (uint8_t)lround(status == STATUS_MANUAL_POWER ? getManualPower() : getActiveHeaterPower());
       // The brew page draws the replayed profile under this session.
       sessionProfile = playing ? playSlot : -1;
     }
@@ -475,7 +477,8 @@ bool brewProfileStart(int index){
   playSlot = index;
   playing = true;
   if(mode == STATUS_BREWING){
-    profileBrewOn(targets[0] / 10.0);
+    // Profiles saved before the heater power was recorded: the setting's.
+    profileBrewOn(targets[0] / 10.0, slotInfo[index].power);
   }
   else{
     // Slots saved before the percentage was recorded: the last one used.

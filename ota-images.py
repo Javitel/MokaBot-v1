@@ -10,9 +10,11 @@
 #    tell whether the published image is newer;
 #  - for the web flasher (flash.html), copies the other images a new board
 #    needs (bootloader, partition table, boot_app0) to build/<name without
-#    .bin>/ and adds the board to build/manifest.json (ESP Web Tools format),
-#    with the offsets PlatformIO itself flashes them at. Each path carries a
-#    hash of the file (?v=...), so browsers never install a cached old image.
+#    .bin>/, writes the board's manifest build/manifest-<name>.json (ESP Web
+#    Tools format) with the offsets PlatformIO itself flashes them at, and
+#    lists the board (`custom_board_label`) in build/boards.json. Each path
+#    carries a hash of the file (?v=...), so browsers never install a cached
+#    old image.
 #
 # `pio run` (all environments) leaves every board's image in build/.
 
@@ -42,6 +44,8 @@ if firmware_name:
 
     output_dir = os.path.join(env.subst("$PROJECT_DIR"), "build")
     board_dir_name = os.path.splitext(firmware_name)[0]
+    # Name shown in the web flasher (custom_board_label in platformio.ini).
+    board_label = env.GetProjectOption("custom_board_label", board_dir_name)
 
     def copy_ota_image(source, target, env):
         os.makedirs(output_dir, exist_ok=True)
@@ -78,8 +82,12 @@ if firmware_name:
         parts.append({"path": versioned_path(firmware_name), "offset": app_offset})
         return sorted(parts, key=lambda part: part["offset"])
 
-    # Adds or replaces this board's build in build/manifest.json, keeping the
-    # other boards (each environment builds on its own).
+    # Writes this board's web flasher manifest, build/manifest-<board>.json
+    # (ESP Web Tools format, one build), and lists the board in
+    # build/boards.json, which flash.html reads to offer the boards to choose
+    # from. One manifest per board, not one build per chip in a shared
+    # manifest: ESP Web Tools picks a build by chip family only, and two
+    # boards share the ESP32-S3.
     def update_manifest(source, target, env):
         mcu = env.BoardConfig().get("build.mcu", "").lower()
         chip_family = CHIP_FAMILIES.get(mcu)
@@ -90,28 +98,39 @@ if firmware_name:
         if parts is None:
             return
 
-        manifest_path = os.path.join(output_dir, "manifest.json")
-        manifest = {}
-        if os.path.isfile(manifest_path):
-            try:
-                with open(manifest_path) as fp:
-                    manifest = json.load(fp)
-            except ValueError:
-                manifest = {}
-        builds = [b for b in manifest.get("builds", []) if b.get("chipFamily") != chip_family]
-        builds.append({"chipFamily": chip_family, "parts": parts})
+        manifest_name = "manifest-" + board_dir_name + ".json"
         manifest = {
-            "name": "MokaBot",
+            "name": "MokaBot (%s)" % board_label,
             "version": firmware_version,
             # Asked on every install: erasing wipes WiFi, settings,
             # calibration and saved brews.
             "new_install_prompt_erase": True,
-            "builds": sorted(builds, key=lambda b: b["chipFamily"]),
+            "builds": [{"chipFamily": chip_family, "parts": parts}],
         }
-        with open(manifest_path, "w") as fp:
+        with open(os.path.join(output_dir, manifest_name), "w") as fp:
             json.dump(manifest, fp, indent=2)
             fp.write("\n")
-        print("Web flasher: %s added to %s" % (chip_family, manifest_path))
+
+        # The shared manifest of earlier versions (one build per chip family).
+        legacy = os.path.join(output_dir, "manifest.json")
+        if os.path.isfile(legacy):
+            os.remove(legacy)
+
+        boards_path = os.path.join(output_dir, "boards.json")
+        boards = []
+        if os.path.isfile(boards_path):
+            try:
+                with open(boards_path) as fp:
+                    boards = json.load(fp).get("boards", [])
+            except ValueError:
+                boards = []
+        boards = [b for b in boards if b.get("id") != board_dir_name]
+        boards.append({"id": board_dir_name, "label": board_label, "chipFamily": chip_family,
+                       "manifest": manifest_name, "version": firmware_version})
+        with open(boards_path, "w") as fp:
+            json.dump({"boards": sorted(boards, key=lambda b: b["label"])}, fp, indent=2)
+            fp.write("\n")
+        print("Web flasher: %s (%s) written to %s" % (board_label, chip_family, manifest_name))
 
     # Reminder after each new image: is this version already released?
     def report_release(source, target, env):

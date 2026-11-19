@@ -132,27 +132,62 @@ double pidValue;
 // Ki starts at 0: estimateIntegral() sets the scheduled value.
 AutoPID myPID(&temperature, &target, &pidValue, 0, timeWindow, defaultp, 0, defaultd);
 
-// Set when heating starts from OFF: the PID's integral is cleared before its
-// next step, so each brew depends only on the target and the room
-// temperature, not on what the brew before left accumulated.
+// Set when heating starts from OFF: the PID is reset and preset for the
+// target (see INTEGRAL_HOLD_PER_DEGREE) before its next step, so each brew
+// depends only on the target and the room temperature, not on what the brew
+// before left accumulated.
 static volatile bool pidClearPending = false;
-// Raised target while holding a temperature (preheat -> bloom -> extraction,
-// or + on the screen): the integral keeps what it holds and does not
-// accumulate during the climb, until the temperature is within
-// INTEGRAL_PAUSE_END of the new target.
-// What it holds is the power that held the temperature before, and through
-// Ki = i * (target - room) its share of the output already rises with the new
-// target, which is about what the new target needs (recorded: 31 ms held at
-// 96 C, 32 ms needed at 101.3 C). Left to accumulate during the climbs it
-// grew from 16 % to 31 % of the heater power and overshot 106 C by 1.6 C;
-// cleared instead, the climb to the bloom temperature took 98 s.
-// Only when the old target was being held (within INTEGRAL_HOLDING_BAND): a
-// start from cold, or a target changed on the way up, accumulates as usual,
-// since that charge is what holds the temperature on arrival.
-#define INTEGRAL_HOLDING_BAND 2.0
-#define INTEGRAL_PAUSE_END    1.5
+// On every target change of at least TARGET_CHANGE_RESET (preheat -> bloom ->
+// extraction, + / - on the screen) and when heating starts from OFF, the PID
+// is reset (AutoPID::reset(): integral, last error and step timer) and its
+// integral preset so that its share of the output is the power that holds
+// the new target: INTEGRAL_HOLD_PER_DEGREE ms of the 250 ms window per degree
+// of (target - room temperature), the heat lost to the room growing with that
+// difference. Extraction targets range from about 102 to 110 C, so what the
+// integral held at one target no longer fits the next; the preset depends on
+// the new target only.
+// Recorded holding power, in ms of the window per degree of (target - room):
+// 0.65 holding 96 C in preheat, 0.45 at 101.3 C and 0.37 at 106 C while
+// extracting (water leaving the boiler takes heat away, so less power holds
+// it). 0.45 is between them; near the target the integral corrects the rest.
+// While climbing to the new target the integral stays at that preset; it
+// accumulates only within INTEGRAL_PAUSE_END of it, so it does not build up
+// on the way and overshoot (it grew from 16 % to 31 % of the heater power
+// during the climbs to 106 C and overshot by 1.6 C).
+// Smaller target changes (a profile following its curve) keep the integral.
+#define INTEGRAL_HOLD_PER_DEGREE 0.45
+#define TARGET_CHANGE_RESET      1.0
+#define INTEGRAL_PAUSE_END       1.5
+// Last PID step's P and I shares of the output (% of the window) and whether
+// the integral was held at its preset (see getPidState).
+static volatile float pidLastP = 0, pidLastI = 0;
+static volatile bool pidLastPaused = false;
 // Ki last given to the PID (for the serial log, see pidUpdate).
 static double scheduledKi = 0;
+
+// Room temperature for the PID; 25 C without a valid reading (sensor fault),
+// since a NaN would make Ki, and with it the PID output, NaN.
+static double pidAmbient(){
+  float ambient = getAmbientTemp();
+  if(isnan(ambient) || ambient < -20 || ambient > 60) ambient = 25;
+  return ambient;
+}
+static void estimateIntegralFor(double forTarget);
+static double heaterScale();
+
+// AutoPID::reset() and the integral preset for the current target (see
+// INTEGRAL_HOLD_PER_DEGREE). Ki is scheduled first, so the preset uses the
+// gain it will be multiplied by.
+static void pidPreset(){
+  estimateIntegralFor(target);
+  myPID.reset();
+  double delta = target - pidAmbient();
+  if(delta > 0 && scheduledKi > 0){
+    // The heater power that holds the target; with a reduced extraction
+    // power the PID has to ask for proportionally more to get it.
+    myPID.setIntegral(INTEGRAL_HOLD_PER_DEGREE * delta / heaterScale() / scheduledKi);
+  }
+}
 // A PID step this long after the last one counts as a resume (see pidUpdate).
 #define PID_RESUME_MS 2000
 
@@ -193,10 +228,24 @@ static volatile int brewStopReason = BREW_STOP_NONE;   // why the last extractio
 // faster), a steadily held temperature shows no change at all, and probe lag
 // makes the estimate drift.
 double lowWaterRatio = 0;
+// Heater power while preheating and extracting, % of the full heater (saved
+// in Preferences): every heater pulse of the PID is shortened to this share,
+// as if the heater were that much weaker. 100 = full power. Calibrations and
+// manual power are not affected. A replayed profile uses the power it was
+// brewed with instead (profileHeaterPower).
+double heaterPower = 100;
+#define HEATER_POWER_MIN 10.0
+#define HEATER_POWER_MAX 100.0
+// Heater power of the profile being replayed; 0 = none (use heaterPower).
+static volatile double profileHeaterPower = 0;
 #define LOW_WATER_RATIO_MIN 1.2
 #define LOW_WATER_RATIO_MAX 5.0
 
 static volatile float heaterDuty = 0;     // on-time fraction of the last window
+// Sum of heaterDuty over the process cycles since the last getHeaterAverage().
+static float heaterDutySum = 0;
+static uint32_t heaterDutyCount = 0;
+static portMUX_TYPE heaterAverageLock = portMUX_INITIALIZER_UNLOCKED;
 static double waterTheta[2] = { 0, 0 };   // a, b
 static double waterP[2][2];
 static int waterWindows = 0;              // fitted windows since the reset
@@ -217,6 +266,13 @@ static double clampPidTuneOffset(double degrees){
   if(degrees < PID_TUNE_OFFSET_MIN) return PID_TUNE_OFFSET_MIN;
   if(degrees > PID_TUNE_OFFSET_MAX) return PID_TUNE_OFFSET_MAX;
   return degrees;
+}
+
+static double clampHeaterPower(double percent){
+  if(isnan(percent)) return HEATER_POWER_MAX;
+  if(percent < HEATER_POWER_MIN) return HEATER_POWER_MIN;
+  if(percent > HEATER_POWER_MAX) return HEATER_POWER_MAX;
+  return percent;
 }
 
 static double clampLowWaterRatio(double ratio){
@@ -475,6 +531,7 @@ void recoverBrewSettings(){
   preheatOffset = clampPreheatOffset(MokaPreferences.getFloat("preheatOffset", preheatOffset));
   overshootMargin = clampOvershootMargin(MokaPreferences.getFloat("overshoot", overshootMargin));
   lowWaterRatio = clampLowWaterRatio(MokaPreferences.getFloat("lowWaterRatio", lowWaterRatio));
+  heaterPower = clampHeaterPower(MokaPreferences.getFloat("heaterPower", heaterPower));
   pidTuneOffset = clampPidTuneOffset(MokaPreferences.getFloat("pidTuneOffset", pidTuneOffset));
 
 }
@@ -859,6 +916,11 @@ BaseType_t xWasDelayed;
       // No I2C: runs on the UI core, away from the bus traffic.
       xTaskCreatePinnedToCore(brewTimer, "brewTimer", 2048, NULL, 4, &brewTimerTask, CORE_UI);
     }
+    // Heater activation over this ~250 ms cycle, for getHeaterAverage().
+    portENTER_CRITICAL(&heaterAverageLock);
+    heaterDutySum += heaterDuty;
+    heaterDutyCount++;
+    portEXIT_CRITICAL(&heaterAverageLock);
 xWasDelayed = xTaskDelayUntil( &xLastWakeTime, xFrequency );
     //vTaskDelay( pdMS_TO_TICKS( 30 ));
 }
@@ -947,6 +1009,15 @@ float getHeaterDuty(){
   return heaterDuty;
 }
 
+float getHeaterAverage(){
+  portENTER_CRITICAL(&heaterAverageLock);
+  float average = heaterDutyCount ? heaterDutySum / heaterDutyCount : heaterDuty;
+  heaterDutySum = 0;
+  heaterDutyCount = 0;
+  portEXIT_CRITICAL(&heaterAverageLock);
+  return average;
+}
+
 float getWaterGainRatio(){
   return waterGainRatio;
 }
@@ -960,6 +1031,28 @@ void setLowWaterRatio(double ratio){
 
 double getLowWaterRatio(){
   return lowWaterRatio;
+}
+
+void setHeaterPower(double percent){
+    prefsLock(); MokaPreferences.begin("my-app", false);
+    heaterPower = clampHeaterPower(percent);
+    MokaPreferences.putFloat("heaterPower", heaterPower);
+    MokaPreferences.end(); prefsUnlock();
+}
+
+double getHeaterPower(){
+  return heaterPower;
+}
+
+// Heater power in use now: the replayed profile's, or the setting's.
+double getActiveHeaterPower(){
+  double profile = profileHeaterPower;
+  return (profileBrew && profile > 0) ? profile : heaterPower;
+}
+
+// Share of the PID's output the heater delivers now (see heaterPower).
+static double heaterScale(){
+  return (mokaStatus == 1 || mokaStatus == 2) ? getActiveHeaterPower() / 100.0 : 1.0;
 }
 
 void calibrationHeatingOn(){
@@ -1035,11 +1128,13 @@ void setProfileTarget(float temp){
 
 // Refuses to start without a valid temperature reading. setMokaStatus()
 // clears profileBrew, so it is set after the status.
-void profileBrewOn(float firstTarget){
+void profileBrewOn(float firstTarget, int heaterPercent){
   if(!temperatureValid()) return;
   setMokaStatus(2);
   // No bloom phase of its own: the saved curve already holds it.
   bloomCurrentTargetTime = 0;
+  // The heater power it was brewed with (0: not recorded, older profiles).
+  profileHeaterPower = heaterPercent > 0 ? clampHeaterPower(heaterPercent) : 0;
   setProfileTarget(firstTarget);
   profileBrew = true;
 }
@@ -1069,22 +1164,18 @@ static void manualPowerUpdate(){
    uint32_t now = millis();
    bool resumed = now - lastRunMs > PID_RESUME_MS;
    lastRunMs = now;
-   // Target the PID followed on its last step, and whether the integral is
-   // paused for a climb to a raised one (see INTEGRAL_HOLDING_BAND).
-   static double trackedTarget = NAN;
+   // Target the PID was preset for, and whether the integral is held at the
+   // preset during the climb (see INTEGRAL_HOLD_PER_DEGREE).
+   static double presetTarget = NAN;
    static bool integralPaused = false;
-   if(pidClearPending){
+   if(pidClearPending || isnan(presetTarget) || fabs(target - presetTarget) >= TARGET_CHANGE_RESET){
      pidClearPending = false;
-     myPID.reset();
-     trackedTarget = target;
-     integralPaused = false;
+     pidPreset();
+     presetTarget = target;
+     // Held until near the target when climbing to it; above it the heater
+     // is off and the integral frozen anyway.
+     integralPaused = target - temperature > INTEGRAL_PAUSE_END;
    }
-   if(isnan(trackedTarget)) trackedTarget = target;
-   if(target > trackedTarget + 0.05){
-     if(fabs(trackedTarget - temperature) <= INTEGRAL_HOLDING_BAND) integralPaused = true;
-   }
-   else if(target < trackedTarget - 0.05) integralPaused = false;
-   trackedTarget = target;
    if(target - temperature <= INTEGRAL_PAUSE_END) integralPaused = false;
    double integralBefore = myPID.getIntegral();
    myPID.run();
@@ -1093,6 +1184,10 @@ static void manualPowerUpdate(){
    // recorded runs: time (ms), status, temperature, target, output (fraction
    // of the window), the P and I shares of the output (ms of the window), room
    // temperature, the P, I, D settings, and 1 while the integral is paused.
+   // For the debug page (getPidState): shares of the output, % of the window.
+   pidLastP = 100.0 * p * (target - temperature) / timeWindow;
+   pidLastI = 100.0 * scheduledKi * myPID.getIntegral() / timeWindow;
+   pidLastPaused = integralPaused;
    static uint8_t logDivider = 0;
    if(++logDivider >= 4){
      logDivider = 0;
@@ -1101,14 +1196,18 @@ static void manualPowerUpdate(){
                    p * (target - temperature), scheduledKi * myPID.getIntegral(),
                    (double)getAmbientTemp(), p, i, d, integralPaused ? 1 : 0);
    }
-   double onTime = pidValue * gain;
-   heaterDuty = onTime <= 0 ? 0 : (onTime >= timeWindow ? 1 : onTime / timeWindow);
+   // Heater on-time in this window: the PID's output, reduced while
+   // extracting by the extraction power setting (heaterScale()).
+   double onTime = pidValue * gain * heaterScale();
+   if(onTime < 0) onTime = 0;
+   if(onTime > timeWindow) onTime = timeWindow;
+   heaterDuty = onTime / timeWindow;
     //if(pidValue>0){
      digitalWrite(pinHeater,getrelayStatus(HIGH));
-     vTaskDelay( pdMS_TO_TICKS( pidValue * gain ));//}
+     vTaskDelay( pdMS_TO_TICKS( onTime ));//}
      //if(pidValue<timeWindow){
       digitalWrite(pinHeater,getrelayStatus(LOW));
-      vTaskDelay( pdMS_TO_TICKS( timeWindow-(pidValue * gain)));//}
+      vTaskDelay( pdMS_TO_TICKS( timeWindow - onTime ));//}
    running = false;
  }
 
@@ -1247,6 +1346,14 @@ float getPidTarget(){
   return target;
 }
 
+bool getPidState(float *pPercent, float *iPercent, bool *integralPaused){
+  *pPercent = pidLastP;
+  *iPercent = pidLastI;
+  *integralPaused = pidLastPaused;
+  // The PID drives the heater while preheating, extracting and calibrating.
+  return mokaStatus == 1 || mokaStatus == 2 || mokaStatus == 4;
+}
+
 float getTargetBoilingTemp(){
     return boil;
   }
@@ -1322,11 +1429,11 @@ void setResistorValues(double newR, double newA, double newB, double newC){
 // the target and the room: Ki = i (the "I" setting, per degree) * delta.
 // Called on every target change and when the PID settings are saved.
 void estimateIntegral(){
-  // Without a valid room temperature (sensor fault) 25 C is assumed: a NaN
-  // here would make Ki, and with it the PID output, NaN.
-  float ambient = getAmbientTemp();
-  if(isnan(ambient) || ambient < -20 || ambient > 60) ambient = 25;
-  double delta = target - ambient;
+  estimateIntegralFor(target);
+}
+
+static void estimateIntegralFor(double forTarget){
+  double delta = forTarget - pidAmbient();
   if(delta < 0) delta = 0;
   scheduledKi = i * delta;
   myPID.setGains(p, scheduledKi, d);

@@ -35,6 +35,8 @@ bool LOAD_DEFAULT_CONFIG_DATA = true;
 // Display/touch driver, selected with a BOARD_* build flag in platformio.ini.
 #if defined(BOARD_WAVESHARE_S3_TOUCH_LCD_35B)
 #include "devices/waveshare-s3-touch-lcd-3.5b.hpp"
+#elif defined(BOARD_JC3248W535)
+#include "devices/jc3248w535.hpp"
 #else
 #include "devices/wt32-sc01.hpp"
 #endif
@@ -98,7 +100,9 @@ String htmlTemp() {
 }
 
 // LVGL is not thread safe: the UI task and the labels task share this lock.
-static SemaphoreHandle_t lvglMutex;
+// Not static: the Game Boy easter egg (src/games/gameboy.cpp) takes it to
+// stop LVGL drawing while it owns the screen.
+SemaphoreHandle_t lvglMutex;
 
 void refreshUI(void *param){
   /*Initialize the input device driver*/

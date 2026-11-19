@@ -3,3 +3,8 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+# Game Boy ROMs and saves (the easter egg reads them from the SD card): never
+# in the repository.
+*.gb
+*.gbc
+*.sav

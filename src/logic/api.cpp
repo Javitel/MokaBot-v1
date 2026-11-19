@@ -92,11 +92,28 @@ static void appendJson(String &json, const char *name, double value, int decimal
   json += str;
 }
 
-// {"temp":<C>,"pressure":<bar>}
+// {"temp":C,"pressure":bar,"status":0-4,"duty":0-1 (average since the last
+//  request),"ambient":C,
+//  "target","error","p","i":... (null unless the PID drives the heater),
+//  "paused":0/1}. p and i are the PID's shares of the heater output (%).
 static String retrieveData() {
   String json = "{";
-  appendJson(json, "temp", getCurrentTemp());
+  float temp = getCurrentTemp();
+  appendJson(json, "temp", temp);
   appendJson(json, "pressure", brewInternalPressure());
+  appendJson(json, "status", getMokaStatus(), 0);
+  // Average since the previous request, so no pulse is missed between them.
+  appendJson(json, "duty", getHeaterAverage(), 3);
+  appendJson(json, "ambient", getAmbientTemp(), 1);
+  float pShare, iShare;
+  bool paused;
+  bool pid = getPidState(&pShare, &iShare, &paused);
+  float target = getPidTarget();
+  appendJson(json, "target", pid ? target : NAN, 2);
+  appendJson(json, "error", pid ? target - temp : NAN, 2);
+  appendJson(json, "p", pid ? pShare : NAN, 1);
+  appendJson(json, "i", pid ? iShare : NAN, 1);
+  appendJson(json, "paused", pid && paused ? 1 : 0, 0);
   json += "}";
   return json;
 }
@@ -133,6 +150,7 @@ static String retrieveSettings() {
   // Celsius; the page shows it in Fahrenheit when the screen uses it.
   appendJson(json, "OvershootMargin", getOvershootMargin());
   appendJson(json, "LowWaterRatio", getLowWaterRatio(), 1);
+  appendJson(json, "HeaterPower", getHeaterPower(), 0);
   appendJson(json, "PidTuneOffset", getPidTuneOffset(), 1);
   appendJson(json, "Fahrenheit", ui_use_fahrenheit() ? 1 : 0, 0);
   appendJson(json, "Decimals", ui_show_decimals() ? 1 : 0, 0);
@@ -212,6 +230,8 @@ static void applySettings(const ApiArgs &args) {
   if (readArg(args, "OvershootMargin", 0.0, value)) setOvershootMargin(value);
   // 0 = off; otherwise clamped to 1.2..5 by setLowWaterRatio().
   if (readArg(args, "LowWaterRatio", 0.0, value)) setLowWaterRatio(value);
+  // Clamped to 10..100 % by setHeaterPower().
+  if (readArg(args, "HeaterPower", 0.0, value)) setHeaterPower(value);
   // Clamped to -15..0 by setPidTuneOffset().
   if (readArg(args, "PidTuneOffset", -1e9, value)) setPidTuneOffset(value);
   // Any integer, negative or positive.
